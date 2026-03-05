@@ -1,0 +1,98 @@
+server:
+  addr: ":20080"
+  name: "example"
+  mode: "release"
+  read_timeout: 30s
+  write_timeout: 30s
+  shutdown_timeout: 10s
+
+log:
+  level: "debug"
+
+auth:
+  secret: "my-secret-key"
+  issuer: "example-service"
+  access_expire: 2h
+  refresh_expire: 168h
+
+database:
+  driver: "mysql"
+  dsn: "root:password@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=True&loc=Local"
+  max_open_conns: 50
+  max_idle_conns: 10
+  max_lifetime: 1h
+  show_sql: true
+  log_level: "info"
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+
+storage:
+  # driver: "s3" | "cos" | "tos" | "oss"
+  driver: "cos"
+
+  # S3-compatible (AWS S3, MinIO, etc.)
+  s3:
+    endpoint: "https://s3.amazonaws.com"
+    region: "us-east-1"
+    bucket: "my-bucket"
+    access_key_id: ""
+    secret_access_key: ""
+    force_path_style: false
+
+  # Tencent Cloud COS
+  cos:
+    bucket_url: "https://<bucket>-<appid>.cos.<region>.myqcloud.com"
+    secret_id: ""
+    secret_key: ""
+    timeout: 30s
+
+  # Alibaba Cloud OSS
+  oss:
+    endpoint: "oss-cn-hangzhou.aliyuncs.com"
+    region: "cn-hangzhou"
+    bucket: "my-bucket"
+    access_key_id: ""
+    access_key_secret: ""
+
+  # Volcengine TOS
+  tos:
+    endpoint: "tos-cn-beijing.volces.com"
+    region: "cn-beijing"
+    bucket: "my-bucket"
+    access_key_id: ""
+    secret_access_key: ""
+
+tracing:
+  service_name: "example-service"
+  endpoint: "localhost:4318"
+  sample_rate: 1.0
+  insecure: true
+
+httpclient:
+  timeout: 5s
+  max_retries: 2
+  retry_wait: 1s
+
+middleware:
+  cors:
+    allow_origins:
+      - "*"
+    allow_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "PATCH"
+      - "OPTIONS"
+    allow_headers:
+      - "Origin"
+      - "Content-Type"
+      - "Authorization"
+      - "X-Request-ID"
+    max_age: 86400
+  rate_limit:
+    rate: 100
+    window: 1m
