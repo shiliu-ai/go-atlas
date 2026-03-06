@@ -3,36 +3,26 @@ package database
 import (
 	"context"
 
-	"xorm.io/xorm"
+	"gorm.io/gorm"
 )
 
 type contextKey struct{}
 
-// WithSession stores a xorm.Session in context for transaction propagation.
-func WithSession(ctx context.Context, sess *xorm.Session) context.Context {
-	return context.WithValue(ctx, contextKey{}, sess)
+// WithTx stores a gorm.DB transaction in context for transaction propagation.
+func WithTx(ctx context.Context, tx *gorm.DB) context.Context {
+	return context.WithValue(ctx, contextKey{}, tx)
 }
 
-// SessionFromContext retrieves the xorm.Session from context.
-func SessionFromContext(ctx context.Context) *xorm.Session {
-	sess, _ := ctx.Value(contextKey{}).(*xorm.Session)
-	return sess
+// TxFromContext retrieves the gorm.DB transaction from context.
+func TxFromContext(ctx context.Context) *gorm.DB {
+	tx, _ := ctx.Value(contextKey{}).(*gorm.DB)
+	return tx
 }
 
 // Transaction runs fn within a database transaction.
-func Transaction(ctx context.Context, engine *xorm.Engine, fn func(ctx context.Context) error) error {
-	sess := engine.NewSession()
-	defer sess.Close()
-
-	if err := sess.Begin(); err != nil {
-		return err
-	}
-
-	txCtx := WithSession(ctx, sess)
-	if err := fn(txCtx); err != nil {
-		_ = sess.Rollback()
-		return err
-	}
-
-	return sess.Commit()
+func Transaction(ctx context.Context, db *gorm.DB, fn func(ctx context.Context) error) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txCtx := WithTx(ctx, tx)
+		return fn(txCtx)
+	})
 }

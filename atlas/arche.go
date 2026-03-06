@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"xorm.io/xorm"
+	"gorm.io/gorm"
 
 	"github.com/shiliu-ai/go-atlas/app"
 	"github.com/shiliu-ai/go-atlas/auth"
@@ -97,7 +97,7 @@ type Atlas struct {
 		httpClient sync.Once
 	}
 	auth       *auth.JWT
-	db         *xorm.Engine
+	db         *gorm.DB
 	dbErr      error
 	redis      *cache.RedisCache
 	redisErr   error
@@ -198,7 +198,7 @@ func (a *Atlas) Auth() *auth.JWT {
 }
 
 // DB returns the database engine (lazy-initialized).
-func (a *Atlas) DB() (*xorm.Engine, error) {
+func (a *Atlas) DB() (*gorm.DB, error) {
 	a.once.db.Do(func() {
 		a.db, a.dbErr = database.New(a.cfg.Database)
 	})
@@ -247,7 +247,11 @@ func (a *Atlas) Run() error {
 	}
 	if a.db != nil {
 		ap.OnShutdown(func(ctx context.Context) error {
-			return a.db.Close()
+			sqlDB, err := a.db.DB()
+			if err != nil {
+				return err
+			}
+			return sqlDB.Close()
 		})
 	}
 	if a.redis != nil {

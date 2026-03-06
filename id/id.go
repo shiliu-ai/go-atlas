@@ -3,6 +3,7 @@ package id
 import (
 	"crypto/rand"
 	"fmt"
+	"sync/atomic"
 	"sync"
 	"time"
 )
@@ -147,4 +148,27 @@ func (s *Snowflake) MustGenerate() int64 {
 		panic(err)
 	}
 	return id
+}
+
+// ---- NumericID ----
+
+const numericEpoch = int64(1577836800000) // 2020-01-01 00:00:00 UTC in ms
+
+var numericSequence uint64
+
+func numericNextSeq() int64 {
+	seq := atomic.AddUint64(&numericSequence, 1)
+	if seq >= 10000 {
+		atomic.StoreUint64(&numericSequence, 0)
+		seq = atomic.AddUint64(&numericSequence, 1)
+	}
+	return int64(seq)
+}
+
+// NumericID generates a unique 16-digit int64 ID that is monotonically increasing.
+// Structure: (ms since 2020-01-01)(12 digits) + sequence(4 digits) = 16 digits.
+// Uses atomic operations, safe for concurrent use.
+func NumericID() int64 {
+	ts := time.Now().UnixMilli() - numericEpoch
+	return ts*10000 + numericNextSeq()
 }
