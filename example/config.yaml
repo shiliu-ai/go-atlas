@@ -15,14 +15,24 @@ auth:
   access_expire: 2h
   refresh_expire: 168h
 
-database:
-  driver: "mysql"
-  dsn: "root:password@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=True&loc=Local"
-  max_open_conns: 50
-  max_idle_conns: 10
-  max_lifetime: 1h
-  show_sql: true
-  log_level: "info"
+databases:
+  default:
+    driver: "mysql"
+    dsn: "root:password@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=True&loc=Local"
+    max_open_conns: 50
+    max_idle_conns: 10
+    max_lifetime: 1h
+    show_sql: true
+    log_level: "info"
+  # Example: additional read-only replica
+  # readonly:
+  #   driver: "mysql"
+  #   dsn: "root:password@tcp(127.0.0.1:3307)/mydb?charset=utf8mb4&parseTime=True&loc=Local"
+  #   max_open_conns: 50
+  #   max_idle_conns: 10
+  #   max_lifetime: 1h
+  #   show_sql: false
+  #   log_level: "warn"
 
 redis:
   addr: "127.0.0.1:6379"

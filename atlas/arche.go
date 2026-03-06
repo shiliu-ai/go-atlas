@@ -7,7 +7,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-
 	"gorm.io/gorm"
 
 	"github.com/shiliu-ai/go-atlas/app"
@@ -97,7 +96,7 @@ type Atlas struct {
 		httpClient sync.Once
 	}
 	auth       *auth.JWT
-	db         *gorm.DB
+	dbm        *database.Manager
 	dbErr      error
 	redis      *cache.RedisCache
 	redisErr   error
@@ -197,12 +196,26 @@ func (a *Atlas) Auth() *auth.JWT {
 	return a.auth
 }
 
-// DB returns the database engine (lazy-initialized).
+// DB returns the default database connection (lazy-initialized).
+// This is a convenience shortcut for DBManager().Default().
 func (a *Atlas) DB() (*gorm.DB, error) {
+	mgr, err := a.DBManager()
+	if err != nil {
+		return nil, err
+	}
+	return mgr.Default()
+}
+
+// DBManager returns the database manager for accessing named connections (lazy-initialized).
+func (a *Atlas) DBManager() (*database.Manager, error) {
 	a.once.db.Do(func() {
-		a.db, a.dbErr = database.New(a.cfg.Database)
+		if len(a.cfg.Databases) == 0 {
+			a.dbErr = fmt.Errorf("atlas: no databases configured")
+			return
+		}
+		a.dbm = database.NewManager(a.cfg.Databases)
 	})
-	return a.db, a.dbErr
+	return a.dbm, a.dbErr
 }
 
 // Redis returns the Redis client (lazy-initialized).
@@ -245,13 +258,9 @@ func (a *Atlas) Run() error {
 	if a.tracingShutdown != nil {
 		ap.OnShutdown(a.tracingShutdown)
 	}
-	if a.db != nil {
+	if a.dbm != nil {
 		ap.OnShutdown(func(ctx context.Context) error {
-			sqlDB, err := a.db.DB()
-			if err != nil {
-				return err
-			}
-			return sqlDB.Close()
+			return a.dbm.Close()
 		})
 	}
 	if a.redis != nil {

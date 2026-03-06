@@ -24,7 +24,7 @@ type Config struct {
 	Server     server.Config     `mapstructure:"server"`
 	Log        LogConfig         `mapstructure:"log"`
 	Auth       auth.Config       `mapstructure:"auth"`
-	Database   database.Config   `mapstructure:"database"`
+	Databases  map[string]database.Config `mapstructure:"databases"`
 	Redis      cache.RedisConfig `mapstructure:"redis"`
 	Storage    storage.Config    `mapstructure:"storage"`
 	Tracing    tracing.Config    `mapstructure:"tracing"`
