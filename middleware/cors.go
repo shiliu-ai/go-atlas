@@ -10,10 +10,10 @@ import (
 
 // CORSConfig holds CORS configuration.
 type CORSConfig struct {
-	AllowOrigins []string
-	AllowMethods []string
-	AllowHeaders []string
-	MaxAge       int // seconds
+	AllowOrigins []string `mapstructure:"allow_origins"`
+	AllowMethods []string `mapstructure:"allow_methods"`
+	AllowHeaders []string `mapstructure:"allow_headers"`
+	MaxAge       int      `mapstructure:"max_age"` // seconds
 }
 
 // DefaultCORSConfig returns a permissive CORS config for development.

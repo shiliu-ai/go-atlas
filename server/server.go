@@ -11,7 +11,7 @@ import (
 
 // Config holds HTTP server configuration.
 type Config struct {
-	Addr            string        `mapstructure:"addr"`
+	Port            int           `mapstructure:"port"`
 	Name            string        `mapstructure:"name"` // service name used as route prefix, e.g. "/myservice"
 	ReadTimeout     time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
@@ -28,8 +28,8 @@ type Server struct {
 
 // New creates a new Server.
 func New(cfg Config) *Server {
-	if cfg.Addr == "" {
-		cfg.Addr = ":8080"
+	if cfg.Port == 0 {
+		cfg.Port = 8080
 	}
 	if cfg.ReadTimeout == 0 {
 		cfg.ReadTimeout = 30 * time.Second
@@ -69,7 +69,7 @@ func (s *Server) Group(middlewares ...gin.HandlerFunc) *gin.RouterGroup {
 // Start starts the HTTP server. It blocks until the server stops.
 func (s *Server) Start() error {
 	s.srv = &http.Server{
-		Addr:         s.cfg.Addr,
+		Addr:         fmt.Sprintf(":%d", s.cfg.Port),
 		Handler:      s.engine,
 		ReadTimeout:  s.cfg.ReadTimeout,
 		WriteTimeout: s.cfg.WriteTimeout,

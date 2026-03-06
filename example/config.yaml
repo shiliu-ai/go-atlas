@@ -1,5 +1,5 @@
 server:
-  addr: ":20080"
+  port: 20080
   name: "example"
   mode: "release"
   read_timeout: 30s
@@ -19,19 +19,14 @@ databases:
   default:
     driver: "mysql"
     dsn: "root:password@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=True&loc=Local"
-    max_open_conns: 50
-    max_idle_conns: 10
-    max_lifetime: 1h
-    show_sql: true
     log_level: "info"
   # Example: additional read-only replica
   # readonly:
   #   driver: "mysql"
   #   dsn: "root:password@tcp(127.0.0.1:3307)/mydb?charset=utf8mb4&parseTime=True&loc=Local"
-  #   max_open_conns: 50
-  #   max_idle_conns: 10
-  #   max_lifetime: 1h
-  #   show_sql: false
+  #   max_open_conns: 100  # override default (50)
+  #   max_idle_conns: 20   # override default (10)
+  #   max_lifetime: 30m    # override default (1h)
   #   log_level: "warn"
 
 redis:
