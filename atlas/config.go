@@ -26,7 +26,7 @@ type Config struct {
 	Auth       auth.Config       `mapstructure:"auth"`
 	Databases  map[string]database.Config `mapstructure:"databases"`
 	Redis      cache.RedisConfig `mapstructure:"redis"`
-	Storage    storage.Config    `mapstructure:"storage"`
+	Storages   map[string]storage.Config `mapstructure:"storages"`
 	Tracing    tracing.Config    `mapstructure:"tracing"`
 	HTTPClient httpclient.Config `mapstructure:"httpclient"`
 	Middleware MiddlewareConfig  `mapstructure:"middleware"`

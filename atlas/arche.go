@@ -100,8 +100,8 @@ type Atlas struct {
 	dbErr      error
 	redis      *cache.RedisCache
 	redisErr   error
-	store      storage.Storage
-	storeErr   error
+	stm      *storage.Manager
+	storeErr error
 	httpClient *httpclient.Client
 
 	// customCfg is an optional user-provided struct pointer for extra config fields.
@@ -226,12 +226,26 @@ func (a *Atlas) Redis() (*cache.RedisCache, error) {
 	return a.redis, a.redisErr
 }
 
-// Storage returns the object storage client (lazy-initialized).
+// Storage returns the default storage instance (lazy-initialized).
+// This is a convenience shortcut for StorageManager().Default().
 func (a *Atlas) Storage() (storage.Storage, error) {
+	mgr, err := a.StorageManager()
+	if err != nil {
+		return nil, err
+	}
+	return mgr.Default()
+}
+
+// StorageManager returns the storage manager for accessing named instances (lazy-initialized).
+func (a *Atlas) StorageManager() (*storage.Manager, error) {
 	a.once.storage.Do(func() {
-		a.store, a.storeErr = storage.New(context.Background(), a.cfg.Storage)
+		if len(a.cfg.Storages) == 0 {
+			a.storeErr = fmt.Errorf("atlas: no storages configured")
+			return
+		}
+		a.stm = storage.NewManager(a.cfg.Storages)
 	})
-	return a.store, a.storeErr
+	return a.stm, a.storeErr
 }
 
 // HTTPClient returns the HTTP client (lazy-initialized).

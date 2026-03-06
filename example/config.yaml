@@ -39,41 +39,24 @@ redis:
   password: ""
   db: 0
 
-storage:
-  # driver: "s3" | "cos" | "tos" | "oss"
-  driver: "cos"
-
-  # S3-compatible (AWS S3, MinIO, etc.)
-  s3:
-    endpoint: "https://s3.amazonaws.com"
-    region: "us-east-1"
-    bucket: "my-bucket"
-    access_key_id: ""
-    secret_access_key: ""
-    force_path_style: false
-
-  # Tencent Cloud COS
-  cos:
-    bucket_url: "https://<bucket>-<appid>.cos.<region>.myqcloud.com"
-    secret_id: ""
-    secret_key: ""
-    timeout: 30s
-
-  # Alibaba Cloud OSS
-  oss:
-    endpoint: "oss-cn-hangzhou.aliyuncs.com"
-    region: "cn-hangzhou"
-    bucket: "my-bucket"
-    access_key_id: ""
-    access_key_secret: ""
-
-  # Volcengine TOS
-  tos:
-    endpoint: "tos-cn-beijing.volces.com"
-    region: "cn-beijing"
-    bucket: "my-bucket"
-    access_key_id: ""
-    secret_access_key: ""
+storages:
+  default:
+    driver: "cos"
+    cos:
+      bucket_url: "https://<bucket>-<appid>.cos.<region>.myqcloud.com"
+      secret_id: ""
+      secret_key: ""
+      timeout: 30s
+  # Example: additional storage provider
+  # backup:
+  #   driver: "s3"
+  #   s3:
+  #     endpoint: "https://s3.amazonaws.com"
+  #     region: "us-east-1"
+  #     bucket: "my-backup-bucket"
+  #     access_key_id: ""
+  #     secret_access_key: ""
+  #     force_path_style: false
 
 tracing:
   service_name: "example-service"
