@@ -101,12 +101,12 @@ func main() {
 
 	// Proxy: call an external API via httpclient.
 	authorized.GET("/proxy", func(c *gin.Context) {
-		url := c.Query("url")
-		if url == "" {
+		rawURL := c.Query("url")
+		if rawURL == "" {
 			response.Fail(c, errors.CodeBadRequest, "url is required")
 			return
 		}
-		resp, err := a.HTTPClient().Get(c.Request.Context(), url)
+		resp, err := a.HTTPClient().Get(c.Request.Context(), rawURL)
 		if err != nil {
 			response.Fail(c, errors.CodeBadGateway, "upstream request failed")
 			return

@@ -3,7 +3,6 @@ package atlas
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -87,21 +86,11 @@ type Atlas struct {
 	extraMiddleware []gin.HandlerFunc
 	skipDefaultMW   bool
 
-	// lazy-initialized components
-	once struct {
-		auth       sync.Once
-		db         sync.Once
-		redis      sync.Once
-		storage    sync.Once
-		httpClient sync.Once
-	}
+	// eagerly initialized components (nil if not configured)
 	auth       *auth.JWT
 	dbm        *database.Manager
-	dbErr      error
 	redis      *cache.RedisCache
-	redisErr   error
-	stm      *storage.Manager
-	storeErr error
+	stm        *storage.Manager
 	httpClient *httpclient.Client
 
 	// customCfg is an optional user-provided struct pointer for extra config fields.
@@ -111,6 +100,8 @@ type Atlas struct {
 // New creates and initializes an Atlas instance.
 // It loads configuration, initializes the logger, tracing, HTTP server,
 // and registers default middleware automatically.
+// Components with valid configuration (databases, redis, storages, etc.)
+// are eagerly initialized; initialization failures cause a panic (fail-fast).
 func New(name string, opts ...Option) *Atlas {
 	a := &Atlas{
 		name:        name,
@@ -168,7 +159,35 @@ func New(name string, opts ...Option) *Atlas {
 		a.server.Engine().Use(a.extraMiddleware...)
 	}
 
+	// Eagerly initialize configured components.
+	a.initComponents()
+
 	return a
+}
+
+// initComponents eagerly initializes all components that have valid configuration.
+func (a *Atlas) initComponents() {
+	if a.cfg.Auth.Secret != "" {
+		a.auth = auth.New(a.cfg.Auth)
+	}
+
+	if len(a.cfg.Databases) > 0 {
+		a.dbm = database.NewManager(a.cfg.Databases)
+	}
+
+	if a.cfg.Redis.Addr != "" {
+		redis, err := cache.NewRedis(a.cfg.Redis)
+		if err != nil {
+			panic(fmt.Sprintf("atlas: init redis: %v", err))
+		}
+		a.redis = redis
+	}
+
+	if len(a.cfg.Storages) > 0 {
+		a.stm = storage.NewManager(a.cfg.Storages)
+	}
+
+	a.httpClient = httpclient.New(a.cfg.HTTPClient, a.logger)
 }
 
 // Config returns the loaded framework configuration.
@@ -188,72 +207,80 @@ func (a *Atlas) Group(middlewares ...gin.HandlerFunc) *gin.RouterGroup {
 	return a.server.Group(middlewares...)
 }
 
-// Auth returns the JWT instance (lazy-initialized).
+// Auth returns the JWT instance. Panics if auth is not configured.
 func (a *Atlas) Auth() *auth.JWT {
-	a.once.auth.Do(func() {
-		a.auth = auth.New(a.cfg.Auth)
-	})
+	if a.auth == nil {
+		panic("atlas: auth not configured (set auth.secret in config)")
+	}
 	return a.auth
 }
 
-// DB returns the default database connection (lazy-initialized).
+// DB returns the default database connection.
 // This is a convenience shortcut for DBManager().Default().
 func (a *Atlas) DB() (*gorm.DB, error) {
-	mgr, err := a.DBManager()
-	if err != nil {
-		return nil, err
-	}
+	mgr := a.DBManager()
 	return mgr.Default()
 }
 
-// DBManager returns the database manager for accessing named connections (lazy-initialized).
-func (a *Atlas) DBManager() (*database.Manager, error) {
-	a.once.db.Do(func() {
-		if len(a.cfg.Databases) == 0 {
-			a.dbErr = fmt.Errorf("atlas: no databases configured")
-			return
-		}
-		a.dbm = database.NewManager(a.cfg.Databases)
-	})
-	return a.dbm, a.dbErr
+// DBManager returns the database manager for accessing named connections.
+// Panics if no databases are configured.
+func (a *Atlas) DBManager() *database.Manager {
+	if a.dbm == nil {
+		panic("atlas: no databases configured")
+	}
+	return a.dbm
 }
 
-// Redis returns the Redis client (lazy-initialized).
-func (a *Atlas) Redis() (*cache.RedisCache, error) {
-	a.once.redis.Do(func() {
-		a.redis, a.redisErr = cache.NewRedis(a.cfg.Redis)
-	})
-	return a.redis, a.redisErr
+// Redis returns the Redis client. Panics if redis is not configured.
+func (a *Atlas) Redis() *cache.RedisCache {
+	if a.redis == nil {
+		panic("atlas: redis not configured (set redis.addr in config)")
+	}
+	return a.redis
 }
 
-// Storage returns the default storage instance (lazy-initialized).
+// Storage returns the default storage instance.
 // This is a convenience shortcut for StorageManager().Default().
 func (a *Atlas) Storage() (storage.Storage, error) {
-	mgr, err := a.StorageManager()
-	if err != nil {
-		return nil, err
-	}
+	mgr := a.StorageManager()
 	return mgr.Default()
 }
 
-// StorageManager returns the storage manager for accessing named instances (lazy-initialized).
-func (a *Atlas) StorageManager() (*storage.Manager, error) {
-	a.once.storage.Do(func() {
-		if len(a.cfg.Storages) == 0 {
-			a.storeErr = fmt.Errorf("atlas: no storages configured")
-			return
-		}
-		a.stm = storage.NewManager(a.cfg.Storages)
-	})
-	return a.stm, a.storeErr
+// StorageManager returns the storage manager for accessing named instances.
+// Panics if no storages are configured.
+func (a *Atlas) StorageManager() *storage.Manager {
+	if a.stm == nil {
+		panic("atlas: no storages configured")
+	}
+	return a.stm
 }
 
-// HTTPClient returns the HTTP client (lazy-initialized).
+// HTTPClient returns the HTTP client.
 func (a *Atlas) HTTPClient() *httpclient.Client {
-	a.once.httpClient.Do(func() {
-		a.httpClient = httpclient.New(a.cfg.HTTPClient, a.logger)
-	})
 	return a.httpClient
+}
+
+// CustomConfigPtr returns the raw pointer to the custom config struct.
+// Use the generic CustomConfig or MustCustomConfig functions for typed access.
+func (a *Atlas) CustomConfigPtr() any {
+	return a.customCfg
+}
+
+// CustomConfig returns the custom config struct with type assertion.
+// Returns the typed config and true if the assertion succeeds, zero value and false otherwise.
+func CustomConfig[T any](a *Atlas) (*T, bool) {
+	cfg, ok := a.customCfg.(*T)
+	return cfg, ok
+}
+
+// MustCustomConfig returns the custom config struct with type assertion.
+// Panics if the custom config is nil or the type assertion fails.
+func MustCustomConfig[T any](a *Atlas) *T {
+	cfg, ok := CustomConfig[T](a)
+	if !ok {
+		panic(fmt.Sprintf("atlas: custom config type mismatch: want *%T", (*T)(nil)))
+	}
+	return cfg
 }
 
 // Route registers routes on the service's base group (/{name}).
