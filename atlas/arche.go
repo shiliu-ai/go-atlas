@@ -291,7 +291,12 @@ func (a *Atlas) Route(fn func(*gin.RouterGroup)) *Atlas {
 }
 
 // Run starts the application and blocks until shutdown signal.
-func (a *Atlas) Run() error {
+// Optional hooks are executed before the server starts (e.g. route registration).
+func (a *Atlas) Run(hooks ...func(*Atlas)) error {
+	for _, h := range hooks {
+		h(a)
+	}
+
 	ap := app.New(a.name, a.logger)
 	ap.Register(&server.Component{Server: a.server})
 
@@ -314,8 +319,9 @@ func (a *Atlas) Run() error {
 }
 
 // MustRun starts the application and panics on error.
-func (a *Atlas) MustRun() {
-	if err := a.Run(); err != nil {
+// Optional hooks are executed before the server starts (e.g. route registration).
+func (a *Atlas) MustRun(hooks ...func(*Atlas)) {
+	if err := a.Run(hooks...); err != nil {
 		panic(fmt.Sprintf("atlas: run: %v", err))
 	}
 }
