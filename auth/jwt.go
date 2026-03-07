@@ -81,21 +81,66 @@ func (j *JWT) GenerateAccess(userID string, metadata map[string]any) (string, er
 }
 
 // Parse validates the token string and returns the claims.
+// It first tries structured Claims parsing; if that fails, it falls back
+// to MapClaims to support legacy tokens (e.g. {"uid": 123, "expire": ...}).
 func (j *JWT) Parse(tokenStr string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
+	keyFunc := func(t *jwt.Token) (any, error) {
 		if t.Method.Alg() != j.method.Alg() {
 			return nil, fmt.Errorf("auth: unexpected signing method %s", t.Header["alg"])
 		}
 		return []byte(j.cfg.Secret), nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("auth: parse token: %w", err)
 	}
 
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
+	// Try structured Claims first.
+	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, keyFunc)
+	if err == nil {
+		claims, ok := token.Claims.(*Claims)
+		if ok && token.Valid {
+			return claims, nil
+		}
+	}
+
+	// Fallback: parse as MapClaims (skip exp validation for legacy tokens).
+	mapToken, mapErr := jwt.Parse(tokenStr, keyFunc, jwt.WithoutClaimsValidation())
+	if mapErr != nil {
+		return nil, fmt.Errorf("auth: parse token: %w", err)
+	}
+	mc, ok := mapToken.Claims.(jwt.MapClaims)
+	if !ok || !mapToken.Valid {
 		return nil, fmt.Errorf("auth: invalid token claims")
 	}
+
+	claims := &Claims{}
+
+	// Extract uid (string or numeric).
+	switch v := mc["uid"].(type) {
+	case string:
+		claims.UserID = v
+	case float64:
+		claims.UserID = fmt.Sprintf("%d", int64(v))
+	}
+
+	// Check legacy "expire" field (milliseconds timestamp).
+	if exp, ok := mc["expire"].(float64); ok {
+		expTime := time.UnixMilli(int64(exp))
+		if time.Now().After(expTime) {
+			return nil, fmt.Errorf("auth: parse token: token is expired")
+		}
+		claims.ExpiresAt = jwt.NewNumericDate(expTime)
+	}
+
+	// Collect remaining fields as metadata.
+	meta := make(map[string]any)
+	for k, v := range mc {
+		if k == "uid" || k == "expire" {
+			continue
+		}
+		meta[k] = v
+	}
+	if len(meta) > 0 {
+		claims.Metadata = meta
+	}
+
 	return claims, nil
 }
 
