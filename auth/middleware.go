@@ -15,7 +15,7 @@ type contextKey struct{}
 // parses it with the given JWT instance, and injects Claims into the request context.
 func Middleware(j *JWT) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenStr := extractToken(c)
+		tokenStr := extractToken(c, j.cfg.HeaderName)
 		if tokenStr == "" {
 			response.Fail(c, errors.CodeUnauthorized, "missing authorization token")
 			c.Abort()
@@ -49,7 +49,10 @@ func UserIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-func extractToken(c *gin.Context) string {
+func extractToken(c *gin.Context, headerName string) string {
+	if headerName != "" {
+		return c.GetHeader(headerName)
+	}
 	auth := c.GetHeader("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		return auth[7:]

@@ -14,6 +14,7 @@ type Config struct {
 	AccessExpire    time.Duration `mapstructure:"access_expire"`
 	RefreshExpire   time.Duration `mapstructure:"refresh_expire"`
 	SigningMethod   string        `mapstructure:"signing_method"` // HS256 (default), HS384, HS512
+	HeaderName      string        `mapstructure:"header_name"`    // custom header name, e.g. "X-Authorization-Token"; defaults to "Authorization" with Bearer prefix
 }
 
 // Claims extends jwt.RegisteredClaims with a custom UserID and optional metadata.
