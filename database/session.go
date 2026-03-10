@@ -35,7 +35,11 @@ func Transaction(ctx context.Context, db *gorm.DB, fn func(ctx context.Context) 
 }
 
 // NamedTransaction runs fn within a database transaction, storing the tx under the given name.
+// If the context already contains a transaction for the given name, it reuses the existing one.
 func NamedTransaction(ctx context.Context, name string, db *gorm.DB, fn func(ctx context.Context) error) error {
+	if NamedTxFromContext(ctx, name) != nil {
+		return fn(ctx)
+	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txCtx := WithNamedTx(ctx, name, tx)
 		return fn(txCtx)
