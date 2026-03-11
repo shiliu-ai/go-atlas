@@ -17,6 +17,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/log"
 	"github.com/shiliu-ai/go-atlas/middleware"
 	"github.com/shiliu-ai/go-atlas/server"
+	"github.com/shiliu-ai/go-atlas/serviceclient"
 	"github.com/shiliu-ai/go-atlas/storage"
 	"github.com/shiliu-ai/go-atlas/tracing"
 )
@@ -92,6 +93,7 @@ type Atlas struct {
 	redis      *cache.RedisCache
 	stm        *storage.Manager
 	httpClient *httpclient.Client
+	svcm       *serviceclient.Manager
 
 	// customCfg is an optional user-provided struct pointer for extra config fields.
 	customCfg any
@@ -188,6 +190,10 @@ func (a *Atlas) initComponents() {
 	}
 
 	a.httpClient = httpclient.New(a.cfg.HTTPClient, a.logger)
+
+	if len(a.cfg.Services) > 0 {
+		a.svcm = serviceclient.NewManager(a.cfg.Services, a.cfg.HTTPClient, a.logger)
+	}
 }
 
 // Config returns the loaded framework configuration.
@@ -258,6 +264,21 @@ func (a *Atlas) StorageManager() *storage.Manager {
 // HTTPClient returns the HTTP client.
 func (a *Atlas) HTTPClient() *httpclient.Client {
 	return a.httpClient
+}
+
+// Service returns the client for the named upstream service.
+// Panics if the service is not configured.
+func (a *Atlas) Service(name string) *serviceclient.Client {
+	return a.ServiceManager().MustGet(name)
+}
+
+// ServiceManager returns the service client manager.
+// Panics if no services are configured.
+func (a *Atlas) ServiceManager() *serviceclient.Manager {
+	if a.svcm == nil {
+		panic("atlas: no services configured (set services in config)")
+	}
+	return a.svcm
 }
 
 // CustomConfigPtr returns the raw pointer to the custom config struct.
@@ -341,6 +362,11 @@ func (a *Atlas) registerDefaultMiddleware() {
 	}
 
 	mw = append(mw, middleware.Logging(a.logger))
+
+	// Forward headers for inter-service communication.
+	if len(a.cfg.Services) > 0 {
+		mw = append(mw, serviceclient.ForwardHeaders())
+	}
 
 	// CORS: use config if provided, otherwise use defaults.
 	corsConfig := a.cfg.Middleware.CORS

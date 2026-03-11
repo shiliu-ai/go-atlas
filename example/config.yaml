@@ -64,6 +64,16 @@ httpclient:
   max_retries: 2
   retry_wait: 1s
 
+# Inter-service communication: register upstream services by name.
+# Each service inherits httpclient defaults unless overridden.
+services:
+  user-service:
+    base_url: "http://localhost:8081/user-service"
+  # order-service:
+  #   base_url: "http://order-service:8080/order-service"
+  #   timeout: 10s       # override global httpclient timeout
+  #   max_retries: 3     # override global httpclient retries
+
 middleware:
   cors:
     allow_origins:

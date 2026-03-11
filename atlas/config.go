@@ -9,6 +9,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/httpclient"
 	"github.com/shiliu-ai/go-atlas/middleware"
 	"github.com/shiliu-ai/go-atlas/server"
+	"github.com/shiliu-ai/go-atlas/serviceclient"
 	"github.com/shiliu-ai/go-atlas/storage"
 	"github.com/shiliu-ai/go-atlas/tracing"
 )
@@ -28,8 +29,9 @@ type Config struct {
 	Redis      cache.RedisConfig `mapstructure:"redis"`
 	Storages   map[string]storage.Config `mapstructure:"storages"`
 	Tracing    tracing.Config    `mapstructure:"tracing"`
-	HTTPClient httpclient.Config `mapstructure:"httpclient"`
-	Middleware MiddlewareConfig  `mapstructure:"middleware"`
+	HTTPClient httpclient.Config                    `mapstructure:"httpclient"`
+	Services   map[string]serviceclient.ServiceConfig `mapstructure:"services"`
+	Middleware MiddlewareConfig                       `mapstructure:"middleware"`
 }
 
 // LogConfig holds logging configuration.

@@ -12,6 +12,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/id"
 	"github.com/shiliu-ai/go-atlas/pagination"
 	"github.com/shiliu-ai/go-atlas/response"
+	"github.com/shiliu-ai/go-atlas/serviceclient"
 	"github.com/shiliu-ai/go-atlas/validate"
 )
 
@@ -115,6 +116,26 @@ func main() {
 			"status": resp.StatusCode,
 			"body":   resp.String(),
 		})
+	})
+
+	// Inter-service call demo: call another atlas-based service.
+	// Requires "services.user-service" in config.yaml:
+	//   services:
+	//     user-service:
+	//       base_url: "http://user-service:8080/user-service"
+	authorized.GET("/user/:id", func(c *gin.Context) {
+		userID := c.Param("id")
+
+		// Typed call: automatically unwraps R{code, message, data}.
+		var user struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := serviceclient.GetJSON(c.Request.Context(), a.Service("user-service"), "/v1/users/"+userID, &user); err != nil {
+			response.Err(c, err)
+			return
+		}
+		response.OK(c, user)
 	})
 
 	// ID generation demo.
