@@ -14,12 +14,15 @@ import (
 	"github.com/shiliu-ai/go-atlas/config"
 	"github.com/shiliu-ai/go-atlas/database"
 	"github.com/shiliu-ai/go-atlas/httpclient"
+	"github.com/shiliu-ai/go-atlas/i18n"
 	"github.com/shiliu-ai/go-atlas/log"
 	"github.com/shiliu-ai/go-atlas/middleware"
 	"github.com/shiliu-ai/go-atlas/server"
 	"github.com/shiliu-ai/go-atlas/serviceclient"
 	"github.com/shiliu-ai/go-atlas/storage"
 	"github.com/shiliu-ai/go-atlas/tracing"
+
+	"golang.org/x/text/language"
 )
 
 // Option configures the Atlas instance.
@@ -87,6 +90,9 @@ type Atlas struct {
 	extraMiddleware []gin.HandlerFunc
 	skipDefaultMW   bool
 
+	// i18n bundle (always initialized)
+	i18nBundle *i18n.Bundle
+
 	// eagerly initialized components (nil if not configured)
 	auth       *auth.JWT
 	dbm        *database.Manager
@@ -149,6 +155,9 @@ func New(name string, opts ...Option) *Atlas {
 			a.tracingShutdown = shutdown
 		}
 	}
+
+	// Initialize i18n bundle.
+	a.initI18n()
 
 	// Initialize HTTP server.
 	a.server = server.New(a.cfg.Server)
@@ -352,6 +361,7 @@ func (a *Atlas) registerDefaultMiddleware() {
 	mw := []gin.HandlerFunc{
 		middleware.Recovery(a.logger),
 		middleware.RequestID(),
+		i18n.Middleware(a.i18nBundle),
 	}
 
 	// Add OTel middleware if tracing is configured.
@@ -385,6 +395,24 @@ func (a *Atlas) registerDefaultMiddleware() {
 	}
 
 	a.server.Engine().Use(mw...)
+}
+
+// initI18n creates the i18n bundle with default translations and sets it as global.
+func (a *Atlas) initI18n() {
+	defaultLang := language.English
+	if a.cfg.I18n.Default != "" {
+		if tag, err := language.Parse(a.cfg.I18n.Default); err == nil {
+			defaultLang = tag
+		}
+	}
+	a.i18nBundle = i18n.NewBundle(defaultLang)
+	i18n.RegisterDefaults(a.i18nBundle)
+	i18n.SetGlobal(a.i18nBundle)
+}
+
+// I18nBundle returns the i18n bundle for registering custom translations.
+func (a *Atlas) I18nBundle() *i18n.Bundle {
+	return a.i18nBundle
 }
 
 func parseLogLevel(s string) log.Level {

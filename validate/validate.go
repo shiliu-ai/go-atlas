@@ -1,12 +1,12 @@
 package validate
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/shiliu-ai/go-atlas/errors"
+	"github.com/shiliu-ai/go-atlas/i18n"
 	"github.com/shiliu-ai/go-atlas/response"
 )
 
@@ -20,7 +20,7 @@ import (
 //	}
 func Bind(c *gin.Context, dst any) bool {
 	if err := c.ShouldBind(dst); err != nil {
-		msg := formatError(err)
+		msg := formatError(c, err)
 		response.Fail(c, errors.CodeBadRequest, msg)
 		c.Abort()
 		return false
@@ -31,7 +31,7 @@ func Bind(c *gin.Context, dst any) bool {
 // BindJSON is a shorthand for JSON body binding.
 func BindJSON(c *gin.Context, dst any) bool {
 	if err := c.ShouldBindJSON(dst); err != nil {
-		msg := formatError(err)
+		msg := formatError(c, err)
 		response.Fail(c, errors.CodeBadRequest, msg)
 		c.Abort()
 		return false
@@ -42,7 +42,7 @@ func BindJSON(c *gin.Context, dst any) bool {
 // BindQuery is a shorthand for query parameter binding.
 func BindQuery(c *gin.Context, dst any) bool {
 	if err := c.ShouldBindQuery(dst); err != nil {
-		msg := formatError(err)
+		msg := formatError(c, err)
 		response.Fail(c, errors.CodeBadRequest, msg)
 		c.Abort()
 		return false
@@ -53,7 +53,7 @@ func BindQuery(c *gin.Context, dst any) bool {
 // BindURI is a shorthand for URI parameter binding.
 func BindURI(c *gin.Context, dst any) bool {
 	if err := c.ShouldBindUri(dst); err != nil {
-		msg := formatError(err)
+		msg := formatError(c, err)
 		response.Fail(c, errors.CodeBadRequest, msg)
 		c.Abort()
 		return false
@@ -62,44 +62,46 @@ func BindURI(c *gin.Context, dst any) bool {
 }
 
 // formatError converts validation errors into a human-readable message.
-func formatError(err error) string {
+func formatError(c *gin.Context, err error) string {
 	var ve validator.ValidationErrors
 	if errors.As(err, &ve) {
 		msgs := make([]string, 0, len(ve))
 		for _, fe := range ve {
-			msgs = append(msgs, fieldErrorMsg(fe))
+			msgs = append(msgs, fieldErrorMsg(c, fe))
 		}
 		return strings.Join(msgs, "; ")
 	}
 	return err.Error()
 }
 
-func fieldErrorMsg(fe validator.FieldError) string {
+func fieldErrorMsg(c *gin.Context, fe validator.FieldError) string {
+	ctx := c.Request.Context()
 	field := fe.Field()
+
 	switch fe.Tag() {
 	case "required":
-		return fmt.Sprintf("%s is required", field)
+		return i18n.T(ctx, i18n.MsgValidateRequired, field)
 	case "email":
-		return fmt.Sprintf("%s must be a valid email", field)
+		return i18n.T(ctx, i18n.MsgValidateEmail, field)
 	case "min":
-		return fmt.Sprintf("%s must be at least %s", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateMin, field, fe.Param())
 	case "max":
-		return fmt.Sprintf("%s must be at most %s", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateMax, field, fe.Param())
 	case "len":
-		return fmt.Sprintf("%s must be exactly %s characters", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateLen, field, fe.Param())
 	case "oneof":
-		return fmt.Sprintf("%s must be one of [%s]", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateOneOf, field, fe.Param())
 	case "gt":
-		return fmt.Sprintf("%s must be greater than %s", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateGT, field, fe.Param())
 	case "gte":
-		return fmt.Sprintf("%s must be greater than or equal to %s", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateGTE, field, fe.Param())
 	case "lt":
-		return fmt.Sprintf("%s must be less than %s", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateLT, field, fe.Param())
 	case "lte":
-		return fmt.Sprintf("%s must be less than or equal to %s", field, fe.Param())
+		return i18n.T(ctx, i18n.MsgValidateLTE, field, fe.Param())
 	case "url":
-		return fmt.Sprintf("%s must be a valid URL", field)
+		return i18n.T(ctx, i18n.MsgValidateURL, field)
 	default:
-		return fmt.Sprintf("%s failed on %s validation", field, fe.Tag())
+		return i18n.T(ctx, i18n.MsgValidateDefault, field, fe.Tag())
 	}
 }

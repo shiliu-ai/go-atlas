@@ -31,6 +31,7 @@ type Config struct {
 	Tracing    tracing.Config    `mapstructure:"tracing"`
 	HTTPClient httpclient.Config                    `mapstructure:"httpclient"`
 	Services   map[string]serviceclient.ServiceConfig `mapstructure:"services"`
+	I18n       I18nConfig                               `mapstructure:"i18n"`
 	Middleware MiddlewareConfig                       `mapstructure:"middleware"`
 }
 
@@ -38,6 +39,11 @@ type Config struct {
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"` // "text" (default) or "json"
+}
+
+// I18nConfig holds i18n configuration.
+type I18nConfig struct {
+	Default string `mapstructure:"default"` // Default language tag, e.g. "en", "zh-Hans". Default: "en".
 }
 
 // MiddlewareConfig holds middleware configuration.
