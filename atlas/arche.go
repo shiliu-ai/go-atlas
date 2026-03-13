@@ -134,7 +134,7 @@ func New(name string, opts ...Option) *Atlas {
 	if a.logger == nil {
 		var logOpts []log.Option
 		if a.cfg.Log.Format == "json" {
-			logOpts = append(logOpts, log.WithFormat(log.FormatJSON))
+			logOpts = append(logOpts, log.WithJSON())
 		}
 		a.logger = log.NewDefault(parseLogLevel(a.cfg.Log.Level), logOpts...)
 	}

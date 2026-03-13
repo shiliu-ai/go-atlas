@@ -7,20 +7,12 @@ import (
 	"os"
 )
 
-// Format controls the log output format.
-type Format int
-
-const (
-	FormatText Format = iota
-	FormatJSON
-)
-
 // Option configures the default logger.
 type Option func(*slogConfig)
 
 type slogConfig struct {
 	out    io.Writer
-	format Format
+	json   bool
 }
 
 // WithOutput sets the log output writer.
@@ -28,15 +20,14 @@ func WithOutput(w io.Writer) Option {
 	return func(c *slogConfig) { c.out = w }
 }
 
-// WithFormat sets the log output format (FormatText or FormatJSON).
-func WithFormat(f Format) Option {
-	return func(c *slogConfig) { c.format = f }
+// WithJSON enables JSON output format.
+func WithJSON() Option {
+	return func(c *slogConfig) { c.json = true }
 }
 
 // slogLogger implements Logger backed by log/slog.
 type slogLogger struct {
 	logger *slog.Logger
-	fields []Field // immutable after creation
 }
 
 func toSlogLevel(l Level) slog.Level {
@@ -64,10 +55,10 @@ func NewDefault(level Level, opts ...Option) Logger {
 	handlerOpts := &slog.HandlerOptions{Level: toSlogLevel(level)}
 
 	var handler slog.Handler
-	if cfg.format == FormatJSON {
+	if cfg.json {
 		handler = slog.NewJSONHandler(cfg.out, handlerOpts)
 	} else {
-		handler = newColorHandler(cfg.out, handlerOpts)
+		handler = slog.NewTextHandler(cfg.out, handlerOpts)
 	}
 
 	return &slogLogger{logger: slog.New(handler)}
@@ -90,14 +81,9 @@ func (l *slogLogger) Error(ctx context.Context, msg string, fields ...Field) {
 }
 
 func (l *slogLogger) WithFields(fields ...Field) Logger {
-	newFields := make([]Field, len(l.fields)+len(fields))
-	copy(newFields, l.fields)
-	copy(newFields[len(l.fields):], fields)
-
 	attrs := fieldsToAttrs(fields)
 	return &slogLogger{
 		logger: l.logger.With(attrsToArgs(attrs)...),
-		fields: newFields,
 	}
 }
 

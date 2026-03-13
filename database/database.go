@@ -9,6 +9,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/shiliu-ai/go-atlas/log"
 )
 
 const DefaultName = "default"
@@ -112,6 +114,8 @@ func (m *Manager) Names() []string {
 }
 
 // New creates a new gorm.DB from config.
+// It uses the global atlas logger for SQL logging so that trace_id/request_id
+// are automatically included in database log entries.
 func New(cfg Config) (*gorm.DB, error) {
 	var dialector gorm.Dialector
 	switch cfg.Driver {
@@ -138,7 +142,7 @@ func New(cfg Config) (*gorm.DB, error) {
 	if cfg.ShowSQL && lvl > logger.Info {
 		lvl = logger.Info
 	}
-	gormCfg.Logger = logger.Default.LogMode(lvl)
+	gormCfg.Logger = newGormLogger(log.Global(), lvl, 200*time.Millisecond)
 
 	db, err := gorm.Open(dialector, gormCfg)
 	if err != nil {

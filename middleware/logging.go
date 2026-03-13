@@ -27,7 +27,7 @@ func Logging(logger log.Logger) gin.HandlerFunc {
 			log.F("status", status),
 			log.F("method", c.Request.Method),
 			log.F("path", path),
-			log.F("latency", latency.String()),
+			log.F("latency_ms", float64(latency)/float64(time.Millisecond)),
 			log.F("ip", c.ClientIP()),
 		}
 
