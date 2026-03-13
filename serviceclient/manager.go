@@ -1,7 +1,9 @@
 package serviceclient
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/shiliu-ai/go-atlas/httpclient"
 	"github.com/shiliu-ai/go-atlas/log"
@@ -60,4 +62,33 @@ func (m *Manager) Names() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// Ping checks connectivity to the named service by sending a GET /health request.
+// Returns nil if the service responds with a 2xx status code.
+func (c *Client) Ping(ctx context.Context) error {
+	resp, err := c.DoRaw(ctx, http.MethodGet, "/health", nil)
+	if err != nil {
+		return fmt.Errorf("serviceclient[%s]: ping failed: %w", c.name, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("serviceclient[%s]: ping returned HTTP %d", c.name, resp.StatusCode)
+	}
+	return nil
+}
+
+// PingAll checks connectivity to all registered services.
+// Returns the first error encountered, or nil if all services are healthy.
+func (m *Manager) PingAll(ctx context.Context) error {
+	for name, c := range m.clients {
+		if err := c.Ping(ctx); err != nil {
+			m.logger.Error(ctx, "service ping failed",
+				log.F("service", name),
+				log.F("error", err),
+			)
+			return err
+		}
+		m.logger.Info(ctx, "service ping ok", log.F("service", name))
+	}
+	return nil
 }

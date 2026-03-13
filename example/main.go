@@ -131,7 +131,7 @@ func main() {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		}
-		if err := serviceclient.GetJSON(c.Request.Context(), a.Service("user-service"), "/v1/users/"+userID, &user); err != nil {
+		if err := serviceclient.Get(c.Request.Context(), a.Service("user-service"), "/v1/users/"+userID, &user); err != nil {
 			response.Err(c, err)
 			return
 		}

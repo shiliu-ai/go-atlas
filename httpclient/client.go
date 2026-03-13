@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -70,7 +71,27 @@ func (r *Response) JSON(dst any) error {
 	return json.Unmarshal(r.body, dst)
 }
 
+// retryableStatusCodes defines which HTTP status codes should trigger a retry.
+var retryableStatusCodes = map[int]bool{
+	http.StatusTooManyRequests:     true, // 429
+	http.StatusInternalServerError: true, // 500
+	http.StatusBadGateway:          true, // 502
+	http.StatusServiceUnavailable:  true, // 503
+	http.StatusGatewayTimeout:      true, // 504
+}
+
+// idempotentMethods are safe to retry without explicit opt-in.
+var idempotentMethods = map[string]bool{
+	http.MethodGet:     true,
+	http.MethodHead:    true,
+	http.MethodPut:     true,
+	http.MethodDelete:  true,
+	http.MethodOptions: true,
+}
+
 // Do executes an HTTP request with tracing, logging, and retry.
+// Non-idempotent methods (POST, PATCH) are not retried unless the error
+// is a connection-level failure (the request was never sent).
 func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 	tracer := otel.Tracer("httpclient")
 	ctx, span := tracer.Start(ctx, fmt.Sprintf("HTTP %s %s", req.Method, req.URL.Path))
@@ -97,6 +118,7 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 		req.Body.Close()
 	}
 
+	canRetry := idempotentMethods[req.Method]
 	var lastErr error
 	attempts := c.cfg.MaxRetries + 1
 
@@ -117,8 +139,11 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 				log.F("attempt", i+1),
 				log.F("error", err),
 			)
+			// Connection-level errors are safe to retry for any method.
 			if i < attempts-1 {
-				time.Sleep(c.cfg.RetryWait * time.Duration(i+1))
+				if waitErr := backoffSleep(ctx, c.cfg.RetryWait, i); waitErr != nil {
+					return nil, waitErr
+				}
 			}
 			continue
 		}
@@ -139,10 +164,12 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 
 		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 
-		// Retry on 5xx server errors.
-		if resp.StatusCode >= 500 && i < attempts-1 {
+		// Retry on retryable status codes, but only for idempotent methods.
+		if retryableStatusCodes[resp.StatusCode] && canRetry && i < attempts-1 {
 			lastErr = fmt.Errorf("httpclient: server error %d", resp.StatusCode)
-			time.Sleep(c.cfg.RetryWait * time.Duration(i+1))
+			if waitErr := backoffSleep(ctx, c.cfg.RetryWait, i); waitErr != nil {
+				return nil, waitErr
+			}
 			continue
 		}
 
@@ -152,6 +179,24 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 	span.RecordError(lastErr)
 	span.SetStatus(codes.Error, lastErr.Error())
 	return nil, fmt.Errorf("httpclient: all %d attempts failed: %w", attempts, lastErr)
+}
+
+// backoffSleep sleeps with exponential backoff + jitter, respecting context cancellation.
+func backoffSleep(ctx context.Context, base time.Duration, attempt int) error {
+	backoff := base * (1 << attempt) // exponential: base, 2*base, 4*base, ...
+	// Add jitter: ±50% of backoff.
+	jitter := time.Duration(rand.Int64N(int64(backoff))) - backoff/2
+	backoff += jitter
+	if backoff < 0 {
+		backoff = base
+	}
+
+	select {
+	case <-time.After(backoff):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Get is a convenience method for GET requests.

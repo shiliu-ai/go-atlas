@@ -267,8 +267,9 @@ func (a *Atlas) HTTPClient() *httpclient.Client {
 }
 
 // Service returns the client for the named upstream service.
+// The returned Service interface can be mocked in tests.
 // Panics if the service is not configured.
-func (a *Atlas) Service(name string) *serviceclient.Client {
+func (a *Atlas) Service(name string) serviceclient.Service {
 	return a.ServiceManager().MustGet(name)
 }
 

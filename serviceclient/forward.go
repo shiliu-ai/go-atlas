@@ -51,18 +51,22 @@ func ForwardHeaders(extra ...string) gin.HandlerFunc {
 }
 
 // WithHeaders returns a new context carrying the given headers for forwarding.
-// This is useful for programmatic service calls outside of Gin handlers.
+// This is useful for programmatic service calls outside of Gin handlers
+// (e.g. cron jobs, message consumers).
 func WithHeaders(ctx context.Context, headers http.Header) context.Context {
 	return context.WithValue(ctx, headersKey, headers)
 }
 
 // forwardHeaders copies stored headers from context into the outgoing request.
+// Uses Add instead of Set to preserve multi-value headers.
 func forwardHeaders(ctx context.Context, req *http.Request) {
-	if stored, ok := ctx.Value(headersKey).(http.Header); ok {
-		for key, vals := range stored {
-			for _, v := range vals {
-				req.Header.Set(key, v)
-			}
+	stored, ok := ctx.Value(headersKey).(http.Header)
+	if !ok {
+		return
+	}
+	for key, vals := range stored {
+		for _, v := range vals {
+			req.Header.Add(key, v)
 		}
 	}
 }
