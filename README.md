@@ -4,7 +4,7 @@
 
 A refined Go framework for building production-grade backend services. Built on Gin, designed for teams who value clarity over ceremony.
 
-Atlas provides a cohesive set of building blocks — authentication, storage, caching, tracing, and more — wired together through a single entry point with sensible defaults and zero boilerplate.
+Atlas provides a cohesive set of building blocks — authentication, storage, caching, tracing, inter-service communication, and more — wired together through a single entry point with sensible defaults and zero boilerplate.
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ func main() {
 }
 ```
 
-That's it. You get structured logging, request IDs, panic recovery, CORS, and graceful shutdown — out of the box.
+That's it. You get structured logging, request IDs, panic recovery, CORS, i18n, and graceful shutdown — out of the box.
 
 ## Install
 
@@ -45,12 +45,19 @@ Atlas uses [Viper](https://github.com/spf13/viper) under the hood. Drop a `confi
 
 ```yaml
 server:
-  addr: ":8080"
+  port: 8080
   name: "my-service"
-  mode: "release"
+  mode: "release"           # debug | release | test
+  read_timeout: 30s
+  write_timeout: 30s
+  shutdown_timeout: 10s
 
 log:
-  level: "info"          # debug | info | warn | error
+  level: "info"             # debug | info | warn | error
+  format: "text"            # text (default) | json
+
+i18n:
+  default: "en"             # default language tag, e.g. "en", "zh-Hans"
 
 auth:
   secret: "change-me"
@@ -58,41 +65,66 @@ auth:
   access_expire: 2h
   refresh_expire: 168h
 
-database:
-  driver: "mysql"        # mysql | postgres
-  dsn: "user:pass@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=True"
-  max_open_conns: 50
-  max_idle_conns: 10
+databases:
+  default:
+    driver: "mysql"         # mysql | postgres
+    dsn: "user:pass@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=True"
+    max_open_conns: 50
+    max_idle_conns: 10
+    max_lifetime: 1h
+    log_level: "info"
+  # readonly:
+  #   driver: "mysql"
+  #   dsn: "user:pass@tcp(127.0.0.1:3307)/mydb?charset=utf8mb4&parseTime=True"
 
 redis:
   addr: "127.0.0.1:6379"
 
-storage:
-  driver: "s3"           # s3 | cos | oss | tos
-  s3:
-    endpoint: "https://s3.amazonaws.com"
-    region: "us-east-1"
-    bucket: "my-bucket"
-    access_key_id: ""
-    secret_access_key: ""
+storages:
+  default:
+    driver: "s3"            # s3 | cos | oss | tos
+    s3:
+      endpoint: "https://s3.amazonaws.com"
+      region: "us-east-1"
+      bucket: "my-bucket"
+      access_key_id: ""
+      secret_access_key: ""
+  # backup:
+  #   driver: "cos"
+  #   cos:
+  #     bucket_url: "https://<bucket>-<appid>.cos.<region>.myqcloud.com"
 
 tracing:
+  service_name: "my-service"
   endpoint: "localhost:4318"
   sample_rate: 1.0
+  insecure: true
 
 httpclient:
   timeout: 5s
   max_retries: 2
+  retry_wait: 500ms
+
+services:
+  user-service:
+    base_url: "http://user-service:8080/user-service"
+    timeout: 5s             # override global httpclient timeout
+    max_retries: 3          # override global httpclient retries
 
 middleware:
   cors:
     allow_origins: ["*"]
+    allow_methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+    allow_headers: ["Origin", "Content-Type", "Authorization", "X-Request-ID"]
+    max_age: 86400
   rate_limit:
     rate: 100
     window: 1m
 ```
 
-All sections are optional. Components initialize lazily on first access — only pay for what you use.
+All sections are optional. Components are eagerly initialized if configured — misconfiguration triggers a fail-fast panic at startup.
+
+Environment variables are also supported with the `APP_` prefix (configurable via `WithEnvPrefix`). Nested keys use underscores: `APP_SERVER_PORT=9090`.
 
 ## Features
 
@@ -116,32 +148,30 @@ authorized.GET("/me", func(c *gin.Context) {
 
 ### Database
 
-xorm-backed ORM with connection pooling, MySQL/PostgreSQL support, and context-aware transactions.
+GORM-based ORM with multiple named connections, connection pooling, and MySQL/PostgreSQL support.
 
 ```go
-db := a.Database()
+// Default connection
+db, err := a.DB()
 
-// Transaction with automatic rollback
-err := database.Transaction(db, func(session *xorm.Session) error {
-    _, err := session.Insert(&user)
-    return err
-})
+// Named connection (e.g. read-only replica)
+db, err := a.DBManager().Get("readonly")
 ```
 
 ### Cache
 
-Unified cache interface backed by Redis.
+Redis client with unified cache interface.
 
 ```go
-cache := a.Cache()
-cache.Set(ctx, "key", "value", 5*time.Minute)
+redis := a.Redis()
+redis.Set(ctx, "key", "value", 5*time.Minute)
 
-val, err := cache.Get(ctx, "key")
+val, err := redis.Get(ctx, "key")
 ```
 
 ### Object Storage
 
-One interface, four cloud providers. Switch backends by changing a config line.
+One interface, four cloud providers. Switch backends by changing a config line. Supports multiple named storage instances.
 
 | Driver | Provider |
 |--------|----------|
@@ -151,9 +181,36 @@ One interface, four cloud providers. Switch backends by changing a config line.
 | `tos`  | Volcengine TOS |
 
 ```go
-store := a.Storage()
-err := store.Put(ctx, "path/to/file.png", reader, size, "image/png")
+// Default storage
+store, err := a.Storage()
+err = store.Put(ctx, "path/to/file.png", reader, size, "image/png")
 url, err := store.SignURL(ctx, "path/to/file.png", 15*time.Minute)
+
+// Named storage
+store, err := a.StorageManager().Get("backup")
+```
+
+### Inter-Service Communication
+
+Typed HTTP clients for calling other atlas-based services. Automatically unwraps the standard `R{code, message, data}` response envelope, forwards request headers (Authorization, X-Request-ID, X-Trace-ID), and supports per-service timeout/retry overrides.
+
+```go
+// Get a service client by name
+userSvc := a.Service("user-service")
+
+// Typed call — response.data is unmarshalled into the target
+var user User
+err := serviceclient.Get(ctx, userSvc, "/v1/users/123", &user)
+
+// With query parameters
+var users []User
+err := serviceclient.Get(ctx, userSvc, "/v1/users", &users,
+    serviceclient.WithQuery(url.Values{"page": {"1"}, "size": {"20"}}),
+)
+
+// POST with body
+var created User
+err := serviceclient.Post(ctx, userSvc, "/v1/users", createReq, &created)
 ```
 
 ### Distributed Locking
@@ -192,14 +249,26 @@ sf.MustGenerate()               // 182439823049723904
 
 ### Structured Errors
 
-Code-based errors that map cleanly to HTTP status codes:
+Code-based errors that map cleanly to HTTP status codes. Supports i18n message keys.
 
 ```go
 errors.New(errors.CodeNotFound, "user not found")
-errors.Wrap(err, errors.CodeInternal, "database query failed")
+errors.NewT(errors.CodeNotFound, "error.user_not_found")  // i18n key
+errors.Wrap(errors.CodeInternal, "database query failed", err)
+
+// Predefined sentinel errors
+errors.ErrNotFound          // 404
+errors.ErrUnauthorized      // 401
+errors.ErrBadRequest        // 400
+
+// Fluent API
+errors.ErrNotFound.WithMessage("user not found")
+errors.ErrNotFound.WithMsgKey("error.user_not_found")
 
 // In handlers
 response.Fail(c, errors.CodeBadRequest, "invalid email format")
+response.FailT(c, errors.CodeBadRequest, "error.invalid_email")  // i18n
+response.Err(c, err)  // auto-detect *errors.Error
 ```
 
 ### Request Validation
@@ -228,6 +297,9 @@ response.OK(c, data)
 
 response.Fail(c, errors.CodeNotFound, "user not found")
 // {"code": 404, "message": "user not found", "trace_id": "..."}
+
+response.Err(c, err)        // derive response from *errors.Error
+response.AbortErr(c, err)   // same as Err but aborts middleware chain
 ```
 
 ### Pagination
@@ -238,6 +310,24 @@ authorized.GET("/users", func(c *gin.Context) {
     users, total := fetchUsers(pg.Offset(), pg.Size)
     response.OK(c, pagination.NewResponse(users, total, pg))
 })
+```
+
+### Internationalization (i18n)
+
+Built-in i18n support with per-request locale detection via `Accept-Language` header.
+
+```go
+// Register custom translations
+bundle := a.I18nBundle()
+bundle.Register(language.English, map[string]string{
+    "error.user_not_found": "User not found",
+})
+bundle.Register(language.SimplifiedChinese, map[string]string{
+    "error.user_not_found": "用户不存在",
+})
+
+// Use i18n in responses
+response.FailT(c, errors.CodeNotFound, "error.user_not_found")
 ```
 
 ### Cryptography
@@ -266,6 +356,23 @@ provider := oauth.NewProvider("github", oauth.ProviderConfig{
 url := provider.AuthCodeURL("state-token")
 ```
 
+### Custom Configuration
+
+Embed `atlas.Config` to add your own config fields:
+
+```go
+type MyConfig struct {
+    atlas.Config `mapstructure:",squash"`
+    Business     BusinessConfig `mapstructure:"business"`
+}
+
+func (c *MyConfig) AtlasConfig() atlas.Config { return c.Config }
+
+var cfg MyConfig
+a := atlas.New("svc", atlas.WithCustomConfig(&cfg))
+// cfg.Business is now loaded from config file
+```
+
 ## Middleware
 
 Atlas registers these middleware by default:
@@ -274,12 +381,15 @@ Atlas registers these middleware by default:
 |------------|-------------|
 | **Recovery** | Catches panics, logs stack traces, returns 500 |
 | **Request ID** | Generates/propagates `X-Request-ID` header |
-| **Tracing** | OpenTelemetry span extraction, `X-Trace-ID` header |
+| **I18n** | Detects locale from `Accept-Language` header |
+| **Tracing** | OpenTelemetry span extraction, `X-Trace-ID` header (if tracing configured) |
 | **Logging** | Structured request logs with latency, status, path |
 | **CORS** | Configurable cross-origin resource sharing |
-| **Rate Limit** | Token bucket (in-memory) or sliding window (Redis) |
+| **Rate Limit** | Sliding window rate limiter (if configured) |
 
 Logging is context-aware — trace IDs and request IDs flow through automatically.
+
+Disable all defaults with `WithoutDefaultMiddleware()`, or add custom middleware with `WithMiddleware(...)`.
 
 ## Observability
 
@@ -287,34 +397,37 @@ Atlas integrates OpenTelemetry for distributed tracing:
 
 ```yaml
 tracing:
+  service_name: "my-service"
   endpoint: "localhost:4318"
   sample_rate: 1.0
   insecure: true
 ```
 
-Traces propagate across HTTP client calls. Every response includes a `trace_id` for end-to-end debugging.
+Traces propagate across HTTP client calls and inter-service communication. Every response includes a `trace_id` for end-to-end debugging.
 
 ## Architecture
 
 ```
 atlas.New()
-  ├── Config        (Viper)
-  ├── Logger        (slog with color output)
-  ├── Server        (Gin + graceful shutdown)
-  ├── Auth          (JWT)
-  ├── Database      (xorm)
-  ├── Cache         (Redis)
-  ├── Storage       (S3/COS/OSS/TOS)
-  ├── HTTPClient    (retries + tracing)
-  ├── Tracing       (OpenTelemetry)
-  └── Middleware    (recovery, logging, CORS, rate limit, ...)
+  ├── Config          (Viper)
+  ├── Logger          (slog, text or JSON)
+  ├── Server          (Gin + graceful shutdown)
+  ├── Auth            (JWT)
+  ├── Database        (GORM, multiple named connections)
+  ├── Redis           (cache)
+  ├── Storage         (S3/COS/OSS/TOS, multiple named instances)
+  ├── HTTPClient      (retries + tracing)
+  ├── ServiceClient   (typed inter-service RPC)
+  ├── I18n            (locale-aware messages)
+  ├── Tracing         (OpenTelemetry)
+  └── Middleware      (recovery, request ID, i18n, tracing, logging, CORS, rate limit)
 ```
 
-Components are lazy-initialized via `sync.Once` — they're created only when you first call them. The lifecycle manager handles startup ordering and reverse-order graceful shutdown on SIGINT/SIGTERM.
+Components are eagerly initialized at startup if configured — initialization failures cause a panic (fail-fast). The lifecycle manager handles startup ordering and reverse-order graceful shutdown on SIGINT/SIGTERM.
 
 ## Example
 
-See [example/main.go](example/main.go) for a complete working example with auth, pagination, proxying, and ID generation.
+See [example/main.go](example/main.go) for a complete working example with auth, pagination, inter-service calls, proxying, and ID generation.
 
 ## License
 

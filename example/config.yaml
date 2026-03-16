@@ -8,6 +8,10 @@ server:
 
 log:
   level: "debug"
+  format: "text"            # text (default) | json
+
+i18n:
+  default: "en"             # default language tag, e.g. "en", "zh-Hans"
 
 auth:
   secret: "my-secret-key"
