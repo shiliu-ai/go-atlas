@@ -4,8 +4,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
+
+// decoderWithSquash enables mapstructure squash so that embedded structs
+// (tagged with `mapstructure:",squash"`) are flattened during decode.
+func decoderWithSquash(dc *mapstructure.DecoderConfig) {
+	dc.Squash = true
+}
 
 // Load reads configuration from file and environment variables.
 // It searches for configName (without extension) in the given paths.
@@ -29,7 +36,7 @@ func Load(configName string, paths []string, envPrefix string, target any) error
 	}
 
 	if target != nil {
-		if err := v.Unmarshal(target); err != nil {
+		if err := v.Unmarshal(target, decoderWithSquash); err != nil {
 			return fmt.Errorf("config: unmarshal: %w", err)
 		}
 	}
@@ -46,7 +53,7 @@ func LoadFromFile(filePath string, target any) error {
 	}
 
 	if target != nil {
-		if err := v.Unmarshal(target); err != nil {
+		if err := v.Unmarshal(target, decoderWithSquash); err != nil {
 			return fmt.Errorf("config: unmarshal: %w", err)
 		}
 	}

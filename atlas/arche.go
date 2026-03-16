@@ -429,7 +429,14 @@ func parseLogLevel(s string) log.Level {
 }
 
 // extractConfig extracts the embedded Config from a custom config struct.
-// It uses reflection-free approach: the custom struct must embed Config directly.
+// The custom struct must implement the AtlasConfig() method:
+//
+//	type MyConfig struct {
+//	    atlas.Config `mapstructure:",squash"`
+//	    Business BusinessConfig `mapstructure:"business"`
+//	}
+//
+//	func (c *MyConfig) AtlasConfig() atlas.Config { return c.Config }
 func extractConfig(v any) Config {
 	type configEmbedder interface {
 		AtlasConfig() Config
@@ -437,7 +444,5 @@ func extractConfig(v any) Config {
 	if ce, ok := v.(configEmbedder); ok {
 		return ce.AtlasConfig()
 	}
-	// Fallback: if user didn't embed, return zero config.
-	// This shouldn't happen when used correctly.
-	return Config{}
+	panic("atlas: custom config must implement AtlasConfig() Config method")
 }
