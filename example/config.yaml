@@ -57,6 +57,16 @@ storages:
   #     secret_access_key: ""
   #     force_path_style: false
 
+sms:
+  default:
+    driver: "tencentcloud"
+    tencent:
+      secret_id: ""
+      secret_key: ""
+      app_id: ""
+      sign: ""
+      region: "ap-guangzhou"
+
 tracing:
   service_name: "example-service"
   endpoint: "localhost:4318"
