@@ -46,9 +46,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/shiliu-ai/go-atlas/errors"
+	"github.com/shiliu-ai/go-atlas/atlas/errors"
 	"github.com/shiliu-ai/go-atlas/httpclient"
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 )
 
 // Service defines the interface for inter-service communication.

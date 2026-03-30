@@ -3,7 +3,7 @@ package middleware
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 )
 
 const HeaderRequestID = "X-Request-ID"

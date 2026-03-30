@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shiliu-ai/go-atlas/errors"
-	"github.com/shiliu-ai/go-atlas/response"
+	"github.com/shiliu-ai/go-atlas/atlas/errors"
+	"github.com/shiliu-ai/go-atlas/atlas/response"
 )
 
 // RateLimitConfig holds rate limiter configuration.

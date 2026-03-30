@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 )
 
 // Config holds HTTP client configuration.

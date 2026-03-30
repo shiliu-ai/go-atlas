@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/shiliu-ai/go-atlas/errors"
-	"github.com/shiliu-ai/go-atlas/response"
+	"github.com/shiliu-ai/go-atlas/atlas/errors"
+	"github.com/shiliu-ai/go-atlas/atlas/response"
 )
 
 // RateLimitRedisConfig holds Redis-based distributed rate limiter configuration.

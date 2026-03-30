@@ -5,7 +5,7 @@ import (
 	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 )
 
 // Recovery recovers from panics and logs the stack trace.

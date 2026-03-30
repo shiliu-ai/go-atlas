@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/shiliu-ai/go-atlas/httpclient"
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 )
 
 // Manager manages named service clients.

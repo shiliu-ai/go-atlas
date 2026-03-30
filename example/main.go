@@ -8,10 +8,10 @@ import (
 	"github.com/shiliu-ai/go-atlas/atlas"
 	"github.com/shiliu-ai/go-atlas/auth"
 	"github.com/shiliu-ai/go-atlas/crypto"
-	"github.com/shiliu-ai/go-atlas/errors"
+	"github.com/shiliu-ai/go-atlas/atlas/errors"
 	"github.com/shiliu-ai/go-atlas/id"
 	"github.com/shiliu-ai/go-atlas/pagination"
-	"github.com/shiliu-ai/go-atlas/response"
+	"github.com/shiliu-ai/go-atlas/atlas/response"
 	"github.com/shiliu-ai/go-atlas/serviceclient"
 	"github.com/shiliu-ai/go-atlas/validate"
 )

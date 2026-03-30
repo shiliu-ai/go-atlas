@@ -7,7 +7,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 )
 
 // App is the application lifecycle manager with dependency injection container.

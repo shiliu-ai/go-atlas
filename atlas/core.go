@@ -3,7 +3,7 @@ package atlas
 import (
 	"fmt"
 
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 	"github.com/spf13/viper"
 )
 

@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shiliu-ai/go-atlas/errors"
-	"github.com/shiliu-ai/go-atlas/i18n"
-	"github.com/shiliu-ai/go-atlas/log"
+	"github.com/shiliu-ai/go-atlas/atlas/errors"
+	"github.com/shiliu-ai/go-atlas/atlas/i18n"
+	"github.com/shiliu-ai/go-atlas/atlas/log"
 	"github.com/shiliu-ai/go-atlas/tracing"
 )
 
