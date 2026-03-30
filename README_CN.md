@@ -92,6 +92,17 @@ storages:
   #   cos:
   #     bucket_url: "https://<bucket>-<appid>.cos.<region>.myqcloud.com"
 
+# 短信（腾讯云）
+sms:
+  default:
+    driver: "tencentcloud"
+    tencent:
+      secret_id: "${SMS_SECRET_ID}"
+      secret_key: "${SMS_SECRET_KEY}"
+      app_id: "1400000000"
+      sign: "YourAppName"
+      region: "ap-guangzhou"
+
 tracing:
   service_name: "my-service"
   endpoint: "localhost:4318"
@@ -186,6 +197,23 @@ url, err := store.SignURL(ctx, "path/to/file.png", 15*time.Minute)
 
 // 命名存储
 store, err := a.StorageManager().Get("backup")
+```
+
+### 短信（SMS）
+
+统一短信发送接口，支持多服务商（腾讯云）；命名实例支持多租户/OEM 场景。
+
+```go
+// 发送验证码
+s, err := a.SMS()
+if err != nil {
+    panic(err)
+}
+err = s.Send(ctx, &sms.SendRequest{
+    Phone:      "+8613800138000",
+    TemplateID: "123456",
+    Params:     []string{"1234", "5"},
+})
 ```
 
 ### 服务间通信
@@ -414,6 +442,7 @@ atlas.New()
   ├── Database        (GORM，多命名连接)
   ├── Redis           (缓存)
   ├── Storage         (S3/COS/OSS/TOS，多命名实例)
+  ├── SMS             (腾讯云，多命名实例)
   ├── HTTPClient      (重试 + 链路追踪)
   ├── ServiceClient   (类型化服务间 RPC)
   ├── I18n            (语言感知消息)

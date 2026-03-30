@@ -94,6 +94,17 @@ storages:
   #   cos:
   #     bucket_url: "https://<bucket>-<appid>.cos.<region>.myqcloud.com"
 
+# SMS (Tencent Cloud)
+sms:
+  default:
+    driver: "tencentcloud"
+    tencent:
+      secret_id: "${SMS_SECRET_ID}"
+      secret_key: "${SMS_SECRET_KEY}"
+      app_id: "1400000000"
+      sign: "YourAppName"
+      region: "ap-guangzhou"
+
 tracing:
   service_name: "my-service"
   endpoint: "localhost:4318"
@@ -188,6 +199,23 @@ url, err := store.SignURL(ctx, "path/to/file.png", 15*time.Minute)
 
 // Named storage
 store, err := a.StorageManager().Get("backup")
+```
+
+### SMS
+
+Unified SMS sending with multi-provider support (Tencent Cloud); named instances for multi-tenant/OEM scenarios.
+
+```go
+// Send verification code
+s, err := a.SMS()
+if err != nil {
+    panic(err)
+}
+err = s.Send(ctx, &sms.SendRequest{
+    Phone:      "+8613800138000",
+    TemplateID: "123456",
+    Params:     []string{"1234", "5"},
+})
 ```
 
 ### Inter-Service Communication
@@ -416,6 +444,7 @@ atlas.New()
   ├── Database        (GORM, multiple named connections)
   ├── Redis           (cache)
   ├── Storage         (S3/COS/OSS/TOS, multiple named instances)
+  ├── SMS             (Tencent Cloud, multiple named instances)
   ├── HTTPClient      (retries + tracing)
   ├── ServiceClient   (typed inter-service RPC)
   ├── I18n            (locale-aware messages)
