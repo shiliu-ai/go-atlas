@@ -4,7 +4,7 @@
 
 A refined Go framework for building production-grade backend services. Built on Gin, designed for teams who value clarity over ceremony.
 
-Atlas provides a cohesive set of building blocks — authentication, storage, caching, tracing, inter-service communication, and more — wired together through a single entry point with sensible defaults and zero boilerplate.
+Atlas provides a cohesive set of building blocks — authentication, storage, caching, tracing, inter-service communication, and more — wired together through a **four-domain architecture** with sensible defaults and zero boilerplate.
 
 ## Quick Start
 
@@ -13,16 +13,17 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    "github.com/shiliu-ai/go-atlas/atlas"
-    "github.com/shiliu-ai/go-atlas/response"
+    atlas "github.com/shiliu-ai/go-atlas"
+    "github.com/shiliu-ai/go-atlas/aether/response"
 )
 
 func main() {
     a := atlas.New("my-service")
 
-    v1 := a.Group().Group("/v1")
-    v1.GET("/health", func(c *gin.Context) {
-        response.OK(c, gin.H{"status": "ok"})
+    a.Route(func(r *gin.RouterGroup) {
+        r.GET("/health", func(c *gin.Context) {
+            response.OK(c, gin.H{"status": "ok"})
+        })
     })
 
     a.MustRun()
@@ -38,6 +39,67 @@ go get github.com/shiliu-ai/go-atlas
 ```
 
 Requires Go 1.25+.
+
+## Architecture
+
+Atlas is organized into four domains, all rooted in Greek mythology:
+
+| Domain | Name | Meaning | Role |
+|--------|------|---------|------|
+| Core | **Atlas** | The Titan | Framework orchestrator |
+| Built-in | **Aether** | The divine air | Essential, omnipresent components |
+| Extension | **Pillar** | The columns | Optional lifecycle components |
+| Toolkit | **Artifact** | Divine tools | Standalone utilities |
+
+```
+*.go                Core (package atlas) — config, server, lifecycle, middleware, Pillar interface
+aether/             Built-in essentials
+  ├── errors        Structured error codes
+  ├── i18n          Internationalization
+  ├── log           Structured logging
+  └── response      Unified API responses
+pillar/             Infrastructure — pluggable components registered via Pillar()
+  ├── auth          JWT authentication
+  ├── cache         Redis cache + distributed locks
+  ├── database      GORM (MySQL/PostgreSQL, multiple named connections)
+  ├── httpclient    Production-ready HTTP client
+  ├── oauth         OAuth2 providers
+  ├── serviceclient Typed inter-service RPC
+  ├── sms           SMS sending (Tencent Cloud)
+  ├── storage       Object storage (S3/COS/OSS/TOS)
+  └── tracing       OpenTelemetry distributed tracing
+artifact/           Utilities — standalone helpers (crypto, ID generation, pagination, validation)
+```
+
+### Pillar Pattern
+
+Every infrastructure component follows the same pattern:
+
+```go
+// 1. Register Pillars as options in atlas.New()
+a := atlas.New("my-service",
+    auth.Pillar(),
+    database.Pillar(),
+    cache.Pillar(),
+)
+
+// 2. Retrieve initialized instances with Of()
+jwt := auth.Of(a)
+dbm := database.Of(a)
+redis := cache.Of(a)
+```
+
+All Pillars implement the `atlas.Pillar` interface:
+
+```go
+type Pillar interface {
+    Name() string
+    Init(core *Core) error
+    Stop(ctx context.Context) error
+}
+```
+
+Pillars can optionally implement `Starter` (background goroutines), `HealthChecker` (health checks), or `MiddlewareProvider` (auto-injected middleware).
 
 ## Configuration
 
@@ -133,7 +195,7 @@ middleware:
     window: 1m
 ```
 
-All sections are optional. Components are eagerly initialized if configured — misconfiguration triggers a fail-fast panic at startup.
+All sections are optional. Pillars read their own config section during `Init()` — misconfiguration triggers a fail-fast panic at startup.
 
 Environment variables are also supported with the `APP_` prefix (configurable via `WithEnvPrefix`). Nested keys use underscores: `APP_SERVER_PORT=9090`.
 
@@ -144,40 +206,56 @@ Environment variables are also supported with the `APP_` prefix (configurable vi
 JWT-based auth with access/refresh token pairs. HS256/384/512 signing.
 
 ```go
+a := atlas.New("my-service", auth.Pillar())
+
+jwt := auth.Of(a)
+
 // Generate token pair
-pair, err := a.Auth().GeneratePair(userID, map[string]any{"role": "admin"})
+pair, err := jwt.GeneratePair(userID, map[string]any{"role": "admin"})
 
 // Protect routes
-authorized := v1.Group("/api", auth.Middleware(a.Auth()))
+a.Route(func(r *gin.RouterGroup) {
+    authorized := r.Group("/api", jwt.Middleware())
 
-// Extract claims
-authorized.GET("/me", func(c *gin.Context) {
-    claims := auth.ClaimsFromContext(c.Request.Context())
-    response.OK(c, gin.H{"user_id": claims.UserID})
+    // Extract claims
+    authorized.GET("/me", func(c *gin.Context) {
+        claims := auth.ClaimsFromContext(c.Request.Context())
+        response.OK(c, gin.H{"user_id": claims.UserID})
+    })
 })
 ```
 
 ### Database
 
-GORM-based ORM with multiple named connections, connection pooling, and MySQL/PostgreSQL support.
+GORM-based ORM with multiple named connections, lazy initialization, connection pooling, and MySQL/PostgreSQL support.
 
 ```go
+a := atlas.New("my-service", database.Pillar())
+
+dbm := database.Of(a)
+
 // Default connection
-db, err := a.DB()
+db, err := dbm.Default()
 
 // Named connection (e.g. read-only replica)
-db, err := a.DBManager().Get("readonly")
+db, err := dbm.Get("readonly")
 ```
 
 ### Cache
 
-Redis client with unified cache interface.
+Redis client with unified cache interface and distributed locking.
 
 ```go
-redis := a.Redis()
-redis.Set(ctx, "key", "value", 5*time.Minute)
+a := atlas.New("my-service", cache.Pillar())
 
+redis := cache.Of(a)
+redis.Set(ctx, "key", "value", 5*time.Minute)
 val, err := redis.Get(ctx, "key")
+
+// Distributed lock
+l := redis.NewLock("my-lock", 10*time.Second)
+acquired, err := l.Acquire(ctx)
+defer l.Release(ctx)
 ```
 
 ### Object Storage
@@ -192,13 +270,17 @@ One interface, four cloud providers. Switch backends by changing a config line. 
 | `tos`  | Volcengine TOS |
 
 ```go
+a := atlas.New("my-service", storage.Pillar())
+
+stm := storage.Of(a)
+
 // Default storage
-store, err := a.Storage()
+store, err := stm.Get("default")
 err = store.Put(ctx, "path/to/file.png", reader, size, "image/png")
 url, err := store.SignURL(ctx, "path/to/file.png", 15*time.Minute)
 
 // Named storage
-store, err := a.StorageManager().Get("backup")
+store, err := stm.Get("backup")
 ```
 
 ### SMS
@@ -206,11 +288,10 @@ store, err := a.StorageManager().Get("backup")
 Unified SMS sending with multi-provider support (Tencent Cloud); named instances for multi-tenant/OEM scenarios.
 
 ```go
-// Send verification code
-s, err := a.SMS()
-if err != nil {
-    panic(err)
-}
+a := atlas.New("my-service", sms.Pillar())
+
+smsMgr := sms.Of(a)
+s, err := smsMgr.Default()
 err = s.Send(ctx, &sms.SendRequest{
     Phone:      "+8613800138000",
     TemplateID: "123456",
@@ -223,8 +304,13 @@ err = s.Send(ctx, &sms.SendRequest{
 Typed HTTP clients for calling other atlas-based services. Automatically unwraps the standard `R{code, message, data}` response envelope, forwards request headers (Authorization, X-Request-ID, X-Trace-ID), and supports per-service timeout/retry overrides.
 
 ```go
-// Get a service client by name
-userSvc := a.Service("user-service")
+a := atlas.New("my-service",
+    httpclient.Pillar(),
+    serviceclient.Pillar(),
+)
+
+svcm := serviceclient.Of(a)
+userSvc := svcm.MustGet("user-service")
 
 // Typed call — response.data is unmarshalled into the target
 var user User
@@ -241,30 +327,23 @@ var created User
 err := serviceclient.Post(ctx, userSvc, "/v1/users", createReq, &created)
 ```
 
-### Distributed Locking
-
-Redis-based distributed locks with owner tokens and auto-expiry.
-
-```go
-l := lock.NewRedisLock(redisClient, "my-lock", 10*time.Second)
-acquired, err := l.Acquire(ctx)
-defer l.Release(ctx)
-```
-
 ### HTTP Client
 
 Production-ready HTTP client with retries, exponential backoff, and trace propagation.
 
 ```go
-resp, err := a.HTTPClient().Get(ctx, "https://api.example.com/data")
+a := atlas.New("my-service", httpclient.Pillar())
+
+hc := httpclient.Of(a)
+resp, err := hc.Get(ctx, "https://api.example.com/data")
 body := resp.String()
 
-resp, err := a.HTTPClient().PostJSON(ctx, url, payload)
+resp, err := hc.PostJSON(ctx, url, payload)
 ```
 
 ### ID Generation
 
-Four strategies for different needs:
+Four strategies for different needs (standalone utilities, no Pillar needed):
 
 ```go
 id.UUID()                       // "550e8400-e29b-41d4-a716-446655440000"
@@ -360,6 +439,8 @@ response.FailT(c, errors.CodeNotFound, "error.user_not_found")
 
 ### Cryptography
 
+Standalone utilities, no Pillar needed:
+
 ```go
 // Password hashing (bcrypt)
 hash, _ := crypto.HashPassword("secret")
@@ -374,31 +455,27 @@ decrypted, _ := cipher.DecryptString(encrypted)
 ### OAuth2
 
 ```go
-provider := oauth.NewProvider("github", oauth.ProviderConfig{
-    ClientID:     "...",
-    ClientSecret: "...",
-    AuthURL:      "https://github.com/login/oauth/authorize",
-    TokenURL:     "https://github.com/login/oauth/access_token",
-    Scopes:       []string{"user:email"},
-})
-url := provider.AuthCodeURL("state-token")
+a := atlas.New("my-service", oauth.Pillar())
+
+oauthMgr := oauth.Of(a)
+github := oauthMgr.MustGet("github")
+url := github.AuthCodeURL("state-token")
 ```
 
 ### Custom Configuration
 
-Embed `atlas.Config` to add your own config fields:
+Use `a.Unmarshal()` to read custom config sections from the same config file:
 
 ```go
-type MyConfig struct {
-    atlas.Config `mapstructure:",squash"`
-    Business     BusinessConfig `mapstructure:"business"`
+type BusinessConfig struct {
+    MaxItems int    `mapstructure:"max_items"`
+    Region   string `mapstructure:"region"`
 }
 
-func (c *MyConfig) AtlasConfig() atlas.Config { return c.Config }
-
-var cfg MyConfig
-a := atlas.New("svc", atlas.WithCustomConfig(&cfg))
-// cfg.Business is now loaded from config file
+var bizCfg BusinessConfig
+if err := a.Unmarshal("business", &bizCfg); err != nil {
+    panic(err)
+}
 ```
 
 ## Middleware
@@ -410,10 +487,11 @@ Atlas registers these middleware by default:
 | **Recovery** | Catches panics, logs stack traces, returns 500 |
 | **Request ID** | Generates/propagates `X-Request-ID` header |
 | **I18n** | Detects locale from `Accept-Language` header |
-| **Tracing** | OpenTelemetry span extraction, `X-Trace-ID` header (if tracing configured) |
 | **Logging** | Structured request logs with latency, status, path |
 | **CORS** | Configurable cross-origin resource sharing |
 | **Rate Limit** | Sliding window rate limiter (if configured) |
+
+Pillars that implement `MiddlewareProvider` (e.g. tracing, serviceclient) automatically inject their middleware between core defaults and user middleware.
 
 Logging is context-aware — trace IDs and request IDs flow through automatically.
 
@@ -421,7 +499,11 @@ Disable all defaults with `WithoutDefaultMiddleware()`, or add custom middleware
 
 ## Observability
 
-Atlas integrates OpenTelemetry for distributed tracing:
+Register the tracing Pillar for OpenTelemetry distributed tracing:
+
+```go
+a := atlas.New("my-service", tracing.Pillar())
+```
 
 ```yaml
 tracing:
@@ -432,27 +514,6 @@ tracing:
 ```
 
 Traces propagate across HTTP client calls and inter-service communication. Every response includes a `trace_id` for end-to-end debugging.
-
-## Architecture
-
-```
-atlas.New()
-  ├── Config          (Viper)
-  ├── Logger          (slog, text or JSON)
-  ├── Server          (Gin + graceful shutdown)
-  ├── Auth            (JWT)
-  ├── Database        (GORM, multiple named connections)
-  ├── Redis           (cache)
-  ├── Storage         (S3/COS/OSS/TOS, multiple named instances)
-  ├── SMS             (Tencent Cloud, multiple named instances)
-  ├── HTTPClient      (retries + tracing)
-  ├── ServiceClient   (typed inter-service RPC)
-  ├── I18n            (locale-aware messages)
-  ├── Tracing         (OpenTelemetry)
-  └── Middleware      (recovery, request ID, i18n, tracing, logging, CORS, rate limit)
-```
-
-Components are eagerly initialized at startup if configured — initialization failures cause a panic (fail-fast). The lifecycle manager handles startup ordering and reverse-order graceful shutdown on SIGINT/SIGTERM.
 
 ## Example
 

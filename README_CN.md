@@ -1,8 +1,10 @@
 # Atlas
 
+[English](README.md)
+
 一套精练的 Go 后端框架，构建于 Gin 之上，为追求简洁与效率的团队而设计。
 
-Atlas 将认证、存储、缓存、链路追踪、服务间通信等常用基础设施整合为一组内聚的构建模块，通过统一入口接入，开箱即用，零样板代码。
+Atlas 将认证、存储、缓存、链路追踪、服务间通信等常用基础设施整合为一组内聚的构建模块，采用**四域架构**，开箱即用，零样板代码。
 
 ## 快速开始
 
@@ -11,16 +13,17 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    "github.com/shiliu-ai/go-atlas/atlas"
-    "github.com/shiliu-ai/go-atlas/response"
+    atlas "github.com/shiliu-ai/go-atlas"
+    "github.com/shiliu-ai/go-atlas/aether/response"
 )
 
 func main() {
     a := atlas.New("my-service")
 
-    v1 := a.Group().Group("/v1")
-    v1.GET("/health", func(c *gin.Context) {
-        response.OK(c, gin.H{"status": "ok"})
+    a.Route(func(r *gin.RouterGroup) {
+        r.GET("/health", func(c *gin.Context) {
+            response.OK(c, gin.H{"status": "ok"})
+        })
     })
 
     a.MustRun()
@@ -36,6 +39,67 @@ go get github.com/shiliu-ai/go-atlas
 ```
 
 需要 Go 1.25+。
+
+## 架构概览
+
+Atlas 按四个领域组织代码，命名均源自希腊神话：
+
+| 领域 | 名称 | 含义 | 职责 |
+|------|------|------|------|
+| 核心 | **Atlas** | 阿特拉斯 | 框架编排器 |
+| 内置 | **Aether** | 以太 | 必备基础组件 |
+| 扩展 | **Pillar** | 立柱 | 可选生命周期组件 |
+| 工具 | **Artifact** | 神器 | 独立工具集 |
+
+```
+*.go                核心（package atlas）— 配置、服务器、生命周期、中间件、Pillar 接口
+aether/             以太 — 内置必备组件
+  ├── errors        结构化错误码
+  ├── i18n          国际化
+  ├── log           结构化日志
+  └── response      统一 API 响应
+pillar/             立柱 — 通过 Pillar() 注册的可插拔组件
+  ├── auth          JWT 认证
+  ├── cache         Redis 缓存 + 分布式锁
+  ├── database      GORM（MySQL/PostgreSQL，多命名连接）
+  ├── httpclient    生产级 HTTP 客户端
+  ├── oauth         OAuth2 提供商
+  ├── serviceclient 类型化服务间 RPC
+  ├── sms           短信发送（腾讯云）
+  ├── storage       对象存储（S3/COS/OSS/TOS）
+  └── tracing       OpenTelemetry 分布式链路追踪
+artifact/           神器 — 独立辅助工具（加密、ID 生成、分页、校验）
+```
+
+### Pillar 模式
+
+每个基础设施组件遵循相同的模式：
+
+```go
+// 1. 立柱：在 atlas.New() 中注册 Pillar
+a := atlas.New("my-service",
+    auth.Pillar(),
+    database.Pillar(),
+    cache.Pillar(),
+)
+
+// 2. 连线：通过 Of() 获取已初始化的实例
+jwt := auth.Of(a)
+dbm := database.Of(a)
+redis := cache.Of(a)
+```
+
+所有 Pillar 实现 `atlas.Pillar` 接口：
+
+```go
+type Pillar interface {
+    Name() string
+    Init(core *Core) error
+    Stop(ctx context.Context) error
+}
+```
+
+Pillar 可选实现 `Starter`（后台协程）、`HealthChecker`（健康检查）或 `MiddlewareProvider`（自动注入中间件）。
 
 ## 配置
 
@@ -131,7 +195,7 @@ middleware:
     window: 1m
 ```
 
-所有配置项均为可选。组件在配置存在时于启动阶段立即初始化——配置错误会触发 panic 快速失败。
+所有配置项均为可选。各 Pillar 在 `Init()` 阶段读取自身配置段——配置错误会触发 panic 快速失败。
 
 环境变量同样支持，默认前缀为 `APP_`（可通过 `WithEnvPrefix` 自定义）。嵌套键使用下划线分隔：`APP_SERVER_PORT=9090`。
 
@@ -142,40 +206,56 @@ middleware:
 基于 JWT 的认证体系，支持 access/refresh 令牌对，HS256/384/512 签名算法。
 
 ```go
+a := atlas.New("my-service", auth.Pillar())
+
+jwt := auth.Of(a)
+
 // 生成令牌对
-pair, err := a.Auth().GeneratePair(userID, map[string]any{"role": "admin"})
+pair, err := jwt.GeneratePair(userID, map[string]any{"role": "admin"})
 
 // 保护路由
-authorized := v1.Group("/api", auth.Middleware(a.Auth()))
+a.Route(func(r *gin.RouterGroup) {
+    authorized := r.Group("/api", jwt.Middleware())
 
-// 提取用户信息
-authorized.GET("/me", func(c *gin.Context) {
-    claims := auth.ClaimsFromContext(c.Request.Context())
-    response.OK(c, gin.H{"user_id": claims.UserID})
+    // 提取用户信息
+    authorized.GET("/me", func(c *gin.Context) {
+        claims := auth.ClaimsFromContext(c.Request.Context())
+        response.OK(c, gin.H{"user_id": claims.UserID})
+    })
 })
 ```
 
 ### 数据库
 
-基于 GORM 的 ORM 层，支持多个命名连接、连接池管理，兼容 MySQL/PostgreSQL。
+基于 GORM 的 ORM 层，支持多个命名连接、懒初始化、连接池管理，兼容 MySQL/PostgreSQL。
 
 ```go
+a := atlas.New("my-service", database.Pillar())
+
+dbm := database.Of(a)
+
 // 默认连接
-db, err := a.DB()
+db, err := dbm.Default()
 
 // 命名连接（如只读副本）
-db, err := a.DBManager().Get("readonly")
+db, err := dbm.Get("readonly")
 ```
 
 ### 缓存
 
-Redis 客户端，统一缓存接口。
+Redis 客户端，统一缓存接口，内置分布式锁。
 
 ```go
-redis := a.Redis()
-redis.Set(ctx, "key", "value", 5*time.Minute)
+a := atlas.New("my-service", cache.Pillar())
 
+redis := cache.Of(a)
+redis.Set(ctx, "key", "value", 5*time.Minute)
 val, err := redis.Get(ctx, "key")
+
+// 分布式锁
+l := redis.NewLock("my-lock", 10*time.Second)
+acquired, err := l.Acquire(ctx)
+defer l.Release(ctx)
 ```
 
 ### 对象存储
@@ -190,13 +270,17 @@ val, err := redis.Get(ctx, "key")
 | `tos` | 火山引擎 TOS |
 
 ```go
+a := atlas.New("my-service", storage.Pillar())
+
+stm := storage.Of(a)
+
 // 默认存储
-store, err := a.Storage()
+store, err := stm.Get("default")
 err = store.Put(ctx, "path/to/file.png", reader, size, "image/png")
 url, err := store.SignURL(ctx, "path/to/file.png", 15*time.Minute)
 
 // 命名存储
-store, err := a.StorageManager().Get("backup")
+store, err := stm.Get("backup")
 ```
 
 ### 短信（SMS）
@@ -204,11 +288,10 @@ store, err := a.StorageManager().Get("backup")
 统一短信发送接口，支持多服务商（腾讯云）；命名实例支持多租户/OEM 场景。
 
 ```go
-// 发送验证码
-s, err := a.SMS()
-if err != nil {
-    panic(err)
-}
+a := atlas.New("my-service", sms.Pillar())
+
+smsMgr := sms.Of(a)
+s, err := smsMgr.Default()
 err = s.Send(ctx, &sms.SendRequest{
     Phone:      "+8613800138000",
     TemplateID: "123456",
@@ -221,8 +304,13 @@ err = s.Send(ctx, &sms.SendRequest{
 为调用其他 Atlas 服务提供的类型化 HTTP 客户端。自动解包标准 `R{code, message, data}` 响应信封，转发请求头（Authorization、X-Request-ID、X-Trace-ID），支持按服务配置超时/重试。
 
 ```go
-// 通过名称获取服务客户端
-userSvc := a.Service("user-service")
+a := atlas.New("my-service",
+    httpclient.Pillar(),
+    serviceclient.Pillar(),
+)
+
+svcm := serviceclient.Of(a)
+userSvc := svcm.MustGet("user-service")
 
 // 类型化调用——response.data 自动反序列化到目标结构
 var user User
@@ -239,30 +327,23 @@ var created User
 err := serviceclient.Post(ctx, userSvc, "/v1/users", createReq, &created)
 ```
 
-### 分布式锁
-
-基于 Redis 的分布式锁，带有持有者令牌和自动过期机制。
-
-```go
-l := lock.NewRedisLock(redisClient, "my-lock", 10*time.Second)
-acquired, err := l.Acquire(ctx)
-defer l.Release(ctx)
-```
-
 ### HTTP 客户端
 
 生产级 HTTP 客户端，内置重试、指数退避和链路追踪传播。
 
 ```go
-resp, err := a.HTTPClient().Get(ctx, "https://api.example.com/data")
+a := atlas.New("my-service", httpclient.Pillar())
+
+hc := httpclient.Of(a)
+resp, err := hc.Get(ctx, "https://api.example.com/data")
 body := resp.String()
 
-resp, err := a.HTTPClient().PostJSON(ctx, url, payload)
+resp, err := hc.PostJSON(ctx, url, payload)
 ```
 
 ### ID 生成
 
-四种策略，适配不同场景：
+四种策略，适配不同场景（独立工具，无需 Pillar）：
 
 ```go
 id.UUID()                       // "550e8400-e29b-41d4-a716-446655440000"
@@ -358,6 +439,8 @@ response.FailT(c, errors.CodeNotFound, "error.user_not_found")
 
 ### 加密
 
+独立工具，无需 Pillar：
+
 ```go
 // 密码哈希 (bcrypt)
 hash, _ := crypto.HashPassword("secret")
@@ -372,31 +455,27 @@ decrypted, _ := cipher.DecryptString(encrypted)
 ### OAuth2
 
 ```go
-provider := oauth.NewProvider("github", oauth.ProviderConfig{
-    ClientID:     "...",
-    ClientSecret: "...",
-    AuthURL:      "https://github.com/login/oauth/authorize",
-    TokenURL:     "https://github.com/login/oauth/access_token",
-    Scopes:       []string{"user:email"},
-})
-url := provider.AuthCodeURL("state-token")
+a := atlas.New("my-service", oauth.Pillar())
+
+oauthMgr := oauth.Of(a)
+github := oauthMgr.MustGet("github")
+url := github.AuthCodeURL("state-token")
 ```
 
 ### 自定义配置
 
-嵌入 `atlas.Config` 来添加自定义配置字段：
+使用 `a.Unmarshal()` 从同一配置文件读取自定义配置段：
 
 ```go
-type MyConfig struct {
-    atlas.Config `mapstructure:",squash"`
-    Business     BusinessConfig `mapstructure:"business"`
+type BusinessConfig struct {
+    MaxItems int    `mapstructure:"max_items"`
+    Region   string `mapstructure:"region"`
 }
 
-func (c *MyConfig) AtlasConfig() atlas.Config { return c.Config }
-
-var cfg MyConfig
-a := atlas.New("svc", atlas.WithCustomConfig(&cfg))
-// cfg.Business 已从配置文件加载
+var bizCfg BusinessConfig
+if err := a.Unmarshal("business", &bizCfg); err != nil {
+    panic(err)
+}
 ```
 
 ## 中间件
@@ -408,10 +487,11 @@ Atlas 默认注册以下中间件：
 | **Recovery** | 捕获 panic，记录堆栈，返回 500 |
 | **Request ID** | 生成或透传 `X-Request-ID` 请求头 |
 | **I18n** | 从 `Accept-Language` 请求头检测语言环境 |
-| **Tracing** | OpenTelemetry Span 提取，`X-Trace-ID` 响应头（需配置 tracing） |
 | **Logging** | 结构化请求日志，包含耗时、状态码、路径 |
 | **CORS** | 可配置的跨域资源共享 |
 | **Rate Limit** | 滑动窗口限流器（需配置） |
+
+实现 `MiddlewareProvider` 接口的 Pillar（如 tracing、serviceclient）会自动注入中间件，位于核心默认中间件与用户自定义中间件之间。
 
 日志系统上下文感知——Trace ID 和 Request ID 自动贯穿整条链路。
 
@@ -419,7 +499,11 @@ Atlas 默认注册以下中间件：
 
 ## 可观测性
 
-Atlas 集成 OpenTelemetry 实现分布式链路追踪：
+注册 tracing Pillar 即可启用 OpenTelemetry 分布式链路追踪：
+
+```go
+a := atlas.New("my-service", tracing.Pillar())
+```
 
 ```yaml
 tracing:
@@ -430,27 +514,6 @@ tracing:
 ```
 
 链路信息在 HTTP 客户端调用和服务间通信中自动传播，每个响应都携带 `trace_id` 用于端到端排查。
-
-## 架构概览
-
-```
-atlas.New()
-  ├── Config          (Viper 配置管理)
-  ├── Logger          (slog，text 或 JSON 格式)
-  ├── Server          (Gin + 优雅关停)
-  ├── Auth            (JWT 认证)
-  ├── Database        (GORM，多命名连接)
-  ├── Redis           (缓存)
-  ├── Storage         (S3/COS/OSS/TOS，多命名实例)
-  ├── SMS             (腾讯云，多命名实例)
-  ├── HTTPClient      (重试 + 链路追踪)
-  ├── ServiceClient   (类型化服务间 RPC)
-  ├── I18n            (语言感知消息)
-  ├── Tracing         (OpenTelemetry)
-  └── Middleware      (恢复, 请求 ID, i18n, 追踪, 日志, CORS, 限流)
-```
-
-所有组件在配置存在时于启动阶段立即初始化——初始化失败会触发 panic（快速失败）。生命周期管理器负责启动顺序编排，并在收到 SIGINT/SIGTERM 时按注册逆序执行优雅关停。
 
 ## 示例
 
