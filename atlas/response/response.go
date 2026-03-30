@@ -1,13 +1,15 @@
 package response
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/shiliu-ai/go-atlas/atlas/errors"
 	"github.com/shiliu-ai/go-atlas/atlas/i18n"
 	"github.com/shiliu-ai/go-atlas/atlas/log"
-	"github.com/shiliu-ai/go-atlas/tracing"
 )
 
 // R is the unified API response structure.
@@ -23,7 +25,7 @@ func newR(c *gin.Context, code int, message string, data any) R {
 		Code:    code,
 		Message: message,
 		Data:    data,
-		TraceID: tracing.TraceIDFromContext(c.Request.Context()),
+		TraceID: traceIDFromContext(c.Request.Context()),
 	}
 }
 
@@ -85,6 +87,16 @@ var codeHTTPStatus = map[errors.Code]int{
 	errors.CodeInternal:        http.StatusInternalServerError,
 	errors.CodeBadGateway:      http.StatusBadGateway,
 	errors.CodeServiceUnavail:  http.StatusServiceUnavailable,
+}
+
+// traceIDFromContext extracts the trace ID string from the current span.
+// Inlined here to avoid an import cycle with pillar/tracing.
+func traceIDFromContext(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if !span.SpanContext().HasTraceID() {
+		return ""
+	}
+	return span.SpanContext().TraceID().String()
 }
 
 func codeToHTTPStatus(code errors.Code) int {
