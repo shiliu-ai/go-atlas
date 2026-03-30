@@ -7,9 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/shiliu-ai/go-atlas/atlas/errors"
-	"github.com/shiliu-ai/go-atlas/atlas/i18n"
-	"github.com/shiliu-ai/go-atlas/atlas/log"
+	"github.com/shiliu-ai/go-atlas/aether/errors"
+	"github.com/shiliu-ai/go-atlas/aether/i18n"
+	"github.com/shiliu-ai/go-atlas/aether/log"
 )
 
 // R is the unified API response structure.
