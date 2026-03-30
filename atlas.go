@@ -7,8 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 
-	"github.com/shiliu-ai/go-atlas/atlas/i18n"
-	"github.com/shiliu-ai/go-atlas/atlas/log"
+	"github.com/shiliu-ai/go-atlas/aether/i18n"
+	"github.com/shiliu-ai/go-atlas/aether/log"
 
 	"golang.org/x/text/language"
 )

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/shiliu-ai/go-atlas/atlas/log"
+	"github.com/shiliu-ai/go-atlas/aether/log"
 )
 
 // run starts all Pillar Starters, the HTTP server, and waits for a

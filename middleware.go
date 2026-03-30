@@ -12,10 +12,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/shiliu-ai/go-atlas/atlas/errors"
-	"github.com/shiliu-ai/go-atlas/atlas/i18n"
-	"github.com/shiliu-ai/go-atlas/atlas/log"
-	"github.com/shiliu-ai/go-atlas/atlas/response"
+	"github.com/shiliu-ai/go-atlas/aether/errors"
+	"github.com/shiliu-ai/go-atlas/aether/i18n"
+	"github.com/shiliu-ai/go-atlas/aether/log"
+	"github.com/shiliu-ai/go-atlas/aether/response"
 )
 
 // --- Middleware setup ---

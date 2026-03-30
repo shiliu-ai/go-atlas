@@ -3,7 +3,7 @@ package atlas
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/shiliu-ai/go-atlas/atlas/log"
+	"github.com/shiliu-ai/go-atlas/aether/log"
 )
 
 // Option configures the Atlas instance before initialization.

@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/shiliu-ai/go-atlas/atlas/log"
+	"github.com/shiliu-ai/go-atlas/aether/log"
 )
 
 // --- test doubles ---
