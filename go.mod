@@ -15,6 +15,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/spf13/viper v1.21.0
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.57
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/sms v1.3.57
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.72
 	github.com/volcengine/ve-tos-golang-sdk/v2 v2.9.1
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.66.0
