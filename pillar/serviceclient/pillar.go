@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	atlas "github.com/shiliu-ai/go-atlas"
+	"github.com/shiliu-ai/go-atlas/atlas"
 	"github.com/shiliu-ai/go-atlas/aether/log"
 	"github.com/shiliu-ai/go-atlas/pillar/httpclient"
 )

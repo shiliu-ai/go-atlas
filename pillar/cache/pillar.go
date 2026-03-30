@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	atlas "github.com/shiliu-ai/go-atlas"
+	"github.com/shiliu-ai/go-atlas/atlas"
 )
 
 // Pillar returns an atlas.Option that registers the cache Pillar.

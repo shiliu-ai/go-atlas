@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	atlas "github.com/shiliu-ai/go-atlas"
+	"github.com/shiliu-ai/go-atlas/atlas"
 )
 
 // Manager manages multiple named SMS instances with lazy initialization.

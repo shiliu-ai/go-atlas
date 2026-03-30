@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	atlas "github.com/shiliu-ai/go-atlas"
+	"github.com/shiliu-ai/go-atlas/atlas"
 )
 
 // Manager manages multiple named OAuth2 providers.

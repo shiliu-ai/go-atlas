@@ -14,7 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	atlas "github.com/shiliu-ai/go-atlas"
+	"github.com/shiliu-ai/go-atlas/atlas"
 )
 
 func init() {

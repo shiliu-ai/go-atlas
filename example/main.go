@@ -9,7 +9,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/artifact/id"
 	"github.com/shiliu-ai/go-atlas/artifact/pagination"
 	"github.com/shiliu-ai/go-atlas/artifact/validate"
-	atlas "github.com/shiliu-ai/go-atlas"
+	"github.com/shiliu-ai/go-atlas/atlas"
 	"github.com/shiliu-ai/go-atlas/aether/errors"
 	"github.com/shiliu-ai/go-atlas/aether/response"
 	"github.com/shiliu-ai/go-atlas/pillar/auth"
