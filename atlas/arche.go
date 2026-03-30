@@ -19,6 +19,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/middleware"
 	"github.com/shiliu-ai/go-atlas/server"
 	"github.com/shiliu-ai/go-atlas/serviceclient"
+	"github.com/shiliu-ai/go-atlas/sms"
 	"github.com/shiliu-ai/go-atlas/storage"
 	"github.com/shiliu-ai/go-atlas/tracing"
 
@@ -98,6 +99,7 @@ type Atlas struct {
 	dbm        *database.Manager
 	redis      *cache.RedisCache
 	stm        *storage.Manager
+	smsm       *sms.Manager
 	httpClient *httpclient.Client
 	svcm       *serviceclient.Manager
 
@@ -198,6 +200,10 @@ func (a *Atlas) initComponents() {
 		a.stm = storage.NewManager(a.cfg.Storages)
 	}
 
+	if len(a.cfg.SMS) > 0 {
+		a.smsm = sms.NewManager(a.cfg.SMS)
+	}
+
 	a.httpClient = httpclient.New(a.cfg.HTTPClient, a.logger)
 
 	if len(a.cfg.Services) > 0 {
@@ -268,6 +274,21 @@ func (a *Atlas) StorageManager() *storage.Manager {
 		panic("atlas: no storages configured")
 	}
 	return a.stm
+}
+
+// SMS returns the default SMS instance.
+// This is a convenience shortcut for SMSManager().Default().
+func (a *Atlas) SMS() (sms.SMS, error) {
+	return a.SMSManager().Default()
+}
+
+// SMSManager returns the SMS manager for accessing named instances.
+// Panics if no SMS providers are configured.
+func (a *Atlas) SMSManager() *sms.Manager {
+	if a.smsm == nil {
+		panic("atlas: no sms configured")
+	}
+	return a.smsm
 }
 
 // HTTPClient returns the HTTP client.

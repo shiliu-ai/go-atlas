@@ -10,6 +10,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/middleware"
 	"github.com/shiliu-ai/go-atlas/server"
 	"github.com/shiliu-ai/go-atlas/serviceclient"
+	"github.com/shiliu-ai/go-atlas/sms"
 	"github.com/shiliu-ai/go-atlas/storage"
 	"github.com/shiliu-ai/go-atlas/tracing"
 )
@@ -28,6 +29,7 @@ type Config struct {
 	Databases  map[string]database.Config `mapstructure:"databases"`
 	Redis      cache.RedisConfig `mapstructure:"redis"`
 	Storages   map[string]storage.Config `mapstructure:"storages"`
+	SMS        map[string]sms.Config     `mapstructure:"sms"`
 	Tracing    tracing.Config    `mapstructure:"tracing"`
 	HTTPClient httpclient.Config                    `mapstructure:"httpclient"`
 	Services   map[string]serviceclient.ServiceConfig `mapstructure:"services"`
