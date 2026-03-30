@@ -3,7 +3,7 @@ package httpclient
 import (
 	"context"
 
-	"github.com/shiliu-ai/go-atlas/atlas"
+	atlas "github.com/shiliu-ai/go-atlas"
 )
 
 // Pillar returns an atlas.Option that registers the httpclient Pillar.

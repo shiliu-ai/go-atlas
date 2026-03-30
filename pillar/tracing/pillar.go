@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"github.com/shiliu-ai/go-atlas/atlas"
+	atlas "github.com/shiliu-ai/go-atlas"
 )
 
 // Tracer is the tracing Pillar wrapper.

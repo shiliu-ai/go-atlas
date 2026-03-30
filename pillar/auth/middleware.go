@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shiliu-ai/go-atlas/atlas/errors"
-	"github.com/shiliu-ai/go-atlas/atlas/response"
+	"github.com/shiliu-ai/go-atlas/aether/errors"
+	"github.com/shiliu-ai/go-atlas/aether/response"
 )
 
 type contextKeyType struct{}

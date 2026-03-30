@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm/logger"
 
-	"github.com/shiliu-ai/go-atlas/atlas/log"
+	"github.com/shiliu-ai/go-atlas/aether/log"
 )
 
 // gormLogger adapts atlas log.Logger to GORM's logger.Interface,
