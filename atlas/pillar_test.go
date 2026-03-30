@@ -35,10 +35,10 @@ func (p *testHealthPillar) Health(ctx context.Context) error {
 	return nil
 }
 
-// --- PillarRegistry tests ---
+// --- pillarRegistry tests ---
 
 func TestRegister(t *testing.T) {
-	r := NewPillarRegistry()
+	r := newPillarRegistry()
 	p := &testPillar{name: "test"}
 	r.Register(p)
 
@@ -52,7 +52,7 @@ func TestRegister(t *testing.T) {
 }
 
 func TestRegisterDuplicate(t *testing.T) {
-	r := NewPillarRegistry()
+	r := newPillarRegistry()
 	r.Register(&testPillar{name: "test"})
 
 	defer func() {
@@ -64,7 +64,7 @@ func TestRegisterDuplicate(t *testing.T) {
 }
 
 func TestRegisterOrder(t *testing.T) {
-	r := NewPillarRegistry()
+	r := newPillarRegistry()
 	r.Register(&testPillar{name: "a"})
 	r.Register(&testPillar{name: "b"})
 	r.Register(&testPillar{name: "c"})
@@ -81,39 +81,39 @@ func TestRegisterOrder(t *testing.T) {
 }
 
 func TestUsePillar(t *testing.T) {
-	r := NewPillarRegistry()
+	r := newPillarRegistry()
 	p := &testPillar{name: "test"}
 	r.Register(p)
 
-	got := UsePillar[*testPillar](r)
+	got := usePillar[*testPillar](r)
 	if got != p {
-		t.Fatal("UsePillar returned wrong pillar")
+		t.Fatal("usePillar returned wrong pillar")
 	}
 }
 
 func TestUsePillarPanic(t *testing.T) {
-	r := NewPillarRegistry()
+	r := newPillarRegistry()
 
 	defer func() {
 		if rec := recover(); rec == nil {
 			t.Fatal("expected panic on missing pillar")
 		}
 	}()
-	UsePillar[*testPillar](r)
+	usePillar[*testPillar](r)
 }
 
 func TestTryUsePillar(t *testing.T) {
-	r := NewPillarRegistry()
+	r := newPillarRegistry()
 	r.Register(&testPillar{name: "test"})
 
-	got, ok := TryUsePillar[*testPillar](r)
+	got, ok := tryUsePillar[*testPillar](r)
 	if !ok || got == nil {
-		t.Fatal("TryUsePillar should find registered pillar")
+		t.Fatal("tryUsePillar should find registered pillar")
 	}
 
-	_, ok = TryUsePillar[*testHealthPillar](r)
+	_, ok = tryUsePillar[*testHealthPillar](r)
 	if ok {
-		t.Fatal("TryUsePillar should return false for unregistered type")
+		t.Fatal("tryUsePillar should return false for unregistered type")
 	}
 }
 
@@ -145,7 +145,7 @@ func TestCoreUnmarshal(t *testing.T) {
 	v.Set("db.host", "localhost")
 	v.Set("db.port", 5432)
 
-	c := NewCore(v, nil)
+	c := newCore(v, nil)
 
 	var cfg struct {
 		Host string `mapstructure:"host"`
@@ -161,7 +161,7 @@ func TestCoreUnmarshal(t *testing.T) {
 
 func TestCoreUnmarshalMissing(t *testing.T) {
 	v := viper.New()
-	c := NewCore(v, nil)
+	c := newCore(v, nil)
 
 	var cfg struct{}
 	err := c.Unmarshal("nonexistent", &cfg)
@@ -176,7 +176,7 @@ func TestCoreUnmarshalMissing(t *testing.T) {
 func TestCoreLogger(t *testing.T) {
 	v := viper.New()
 	l := log.NewDefault(log.LevelInfo)
-	c := NewCore(v, l)
+	c := newCore(v, l)
 
 	sub := c.Logger("mymod")
 	if sub == nil {

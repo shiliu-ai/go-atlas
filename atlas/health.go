@@ -2,6 +2,7 @@ package atlas
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,51 +14,71 @@ func (a *Atlas) registerHealthRoutes() {
 	a.srv.engine.GET("/readyz", a.readyzHandler)
 }
 
+// pillarStatus holds the health status and latency for a single pillar.
+type pillarStatus struct {
+	Status  string `json:"status"`
+	Latency string `json:"latency"`
+}
+
 // healthzHandler returns the aggregated health status of all Pillars
 // that implement HealthChecker.
 func (a *Atlas) healthzHandler(c *gin.Context) {
-	errs := a.checkHealth(c)
-	if len(errs) > 0 {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status": "unhealthy",
-			"errors": errs,
-		})
-		return
+	overall, pillars := a.checkHealth(c)
+	status := http.StatusOK
+	if overall != "healthy" {
+		status = http.StatusServiceUnavailable
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	resp := gin.H{"status": overall}
+	if len(pillars) > 0 {
+		resp["pillars"] = pillars
+	}
+	c.JSON(status, resp)
 }
 
 // livezHandler always returns 200 — indicates the process is alive.
 func (a *Atlas) livezHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 }
 
 // readyzHandler checks all HealthChecker Pillars to determine readiness.
 func (a *Atlas) readyzHandler(c *gin.Context) {
-	errs := a.checkHealth(c)
-	if len(errs) > 0 {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status": "not ready",
-			"errors": errs,
-		})
-		return
+	overall, pillars := a.checkHealth(c)
+	status := http.StatusOK
+	statusText := "healthy"
+	if overall != "healthy" {
+		status = http.StatusServiceUnavailable
+		statusText = "not ready"
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	resp := gin.H{"status": statusText}
+	if len(pillars) > 0 {
+		resp["pillars"] = pillars
+	}
+	c.JSON(status, resp)
 }
 
-// checkHealth iterates registered Pillars and returns error messages from any
-// that implement HealthChecker and report unhealthy.
-func (a *Atlas) checkHealth(c *gin.Context) map[string]string {
-	errs := make(map[string]string)
+// checkHealth iterates registered Pillars and returns overall status plus
+// per-pillar status with latency for all HealthChecker pillars.
+func (a *Atlas) checkHealth(c *gin.Context) (string, map[string]pillarStatus) {
+	pillars := make(map[string]pillarStatus)
+	overall := "healthy"
 	for _, p := range a.registry.Pillars() {
 		if hc, ok := p.(HealthChecker); ok {
-			if err := hc.Health(c.Request.Context()); err != nil {
-				errs[p.Name()] = err.Error()
+			start := time.Now()
+			err := hc.Health(c.Request.Context())
+			latency := time.Since(start)
+			ps := pillarStatus{
+				Status:  "healthy",
+				Latency: latency.String(),
 			}
+			if err != nil {
+				ps.Status = "unhealthy"
+				overall = "unhealthy"
+			}
+			pillars[p.Name()] = ps
 		}
 	}
-	if len(errs) == 0 {
-		return nil
+	if len(pillars) == 0 {
+		return overall, nil
 	}
-	return errs
+	return overall, pillars
 }

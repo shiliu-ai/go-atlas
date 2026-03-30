@@ -15,9 +15,9 @@ type Core struct {
 	logger log.Logger
 }
 
-// NewCore creates a Core from a viper config and logger.
+// newCore creates a Core from a viper config and logger.
 // This is intended for internal use by Atlas.
-func NewCore(config *viper.Viper, logger log.Logger) *Core {
+func newCore(config *viper.Viper, logger log.Logger) *Core {
 	return &Core{config: config, logger: logger}
 }
 

@@ -26,21 +26,22 @@ type Atlas struct {
 	logger  log.Logger
 	srv     *server
 
-	registry *PillarRegistry
+	registry *pillarRegistry
 
 	extraMiddleware []gin.HandlerFunc
 	skipDefaultMW   bool
 	i18nBundle      *i18n.Bundle
 
-	// pendingPillars collects Pillars added via WithPillar before init.
-	pendingPillars []Pillar
+	// rateLimitStore holds a reference to the rate limiter store (if any)
+	// so its cleanup goroutine can be stopped during shutdown.
+	rateLimitStore *memStore
 }
 
 // New creates and initializes an Atlas instance.
 //
 // Initialization flow:
 //  1. Create Atlas with defaults
-//  2. Apply all Options (collects Pillars and settings)
+//  2. Apply all Options (registers Pillars and settings)
 //  3. Load config (Viper)
 //  4. Init Core (logger, server)
 //  5. Init Pillars (in registration order)
@@ -52,21 +53,15 @@ func New(name string, opts ...Option) *Atlas {
 		configName:  "config",
 		configPaths: []string{"."},
 		envPrefix:   "APP",
-		registry:    NewPillarRegistry(),
+		registry:    newPillarRegistry(),
 	}
 
-	// 1. Apply options (collects settings and pending Pillars).
+	// 1. Apply options (registers Pillars and collects settings).
 	for _, opt := range opts {
 		opt(a)
 	}
 
-	// 2. Register pending Pillars into the registry.
-	for _, p := range a.pendingPillars {
-		a.registry.Register(p)
-	}
-	a.pendingPillars = nil
-
-	// 3. Load config.
+	// 2. Load config.
 	v, cfg, err := loadConfig(a.configName, a.configPaths, a.envPrefix)
 	if err != nil {
 		panic(fmt.Sprintf("atlas: %v", err))
@@ -74,7 +69,7 @@ func New(name string, opts ...Option) *Atlas {
 	a.config = v
 	a.coreCfg = cfg
 
-	// 4. Init logger.
+	// 3. Init logger.
 	if a.logger == nil {
 		var logOpts []log.Option
 		if a.coreCfg.Log.Format == "json" {
@@ -90,18 +85,18 @@ func New(name string, opts ...Option) *Atlas {
 	// Init HTTP server.
 	a.srv = newServer(a.coreCfg.Server)
 
-	// 5. Init Pillars (in registration order).
-	core := NewCore(a.config, a.logger)
+	// 4. Init Pillars (in registration order).
+	core := newCore(a.config, a.logger)
 	for _, p := range a.registry.Pillars() {
 		if err := p.Init(core); err != nil {
 			panic(fmt.Sprintf("atlas: init pillar %q: %v", p.Name(), err))
 		}
 	}
 
-	// 6. Setup middleware (3 layers).
+	// 5. Setup middleware (3 layers).
 	a.setupMiddleware()
 
-	// 7. Register health routes.
+	// 6. Register health routes.
 	a.registerHealthRoutes()
 
 	return a
@@ -147,9 +142,9 @@ func (a *Atlas) Logger() log.Logger {
 }
 
 // Register adds a Pillar to the registry. This is a convenience method
-// that delegates to the underlying PillarRegistry.
+// that delegates to the underlying pillarRegistry.
 // Note: Pillars registered after New() will NOT be auto-initialized;
-// prefer WithPillar option for standard usage.
+// prefer using Pillar option functions for standard usage.
 func (a *Atlas) Register(p Pillar) {
 	a.registry.Register(p)
 }
@@ -157,13 +152,13 @@ func (a *Atlas) Register(p Pillar) {
 // Use retrieves a registered Pillar by concrete type.
 // Panics if no Pillar of the given type is found.
 func Use[T Pillar](a *Atlas) T {
-	return UsePillar[T](a.registry)
+	return usePillar[T](a.registry)
 }
 
 // TryUse retrieves a registered Pillar by concrete type without panicking.
 // Returns the pillar and true if found, zero value and false otherwise.
 func TryUse[T Pillar](a *Atlas) (T, bool) {
-	return TryUsePillar[T](a.registry)
+	return tryUsePillar[T](a.registry)
 }
 
 // I18nBundle returns the i18n bundle for registering custom translations.

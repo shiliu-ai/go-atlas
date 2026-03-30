@@ -31,16 +31,15 @@ type MiddlewareProvider interface {
 	Middleware() []gin.HandlerFunc
 }
 
-// PillarRegistry holds registered Pillar instances and tracks their order.
-// It will be embedded into Atlas in a future refactor.
-type PillarRegistry struct {
+// pillarRegistry holds registered Pillar instances and tracks their order.
+type pillarRegistry struct {
 	pillars     map[string]Pillar
 	pillarOrder []string
 }
 
-// NewPillarRegistry creates an empty PillarRegistry.
-func NewPillarRegistry() *PillarRegistry {
-	return &PillarRegistry{
+// newPillarRegistry creates an empty pillarRegistry.
+func newPillarRegistry() *pillarRegistry {
+	return &pillarRegistry{
 		pillars:     make(map[string]Pillar),
 		pillarOrder: []string{},
 	}
@@ -48,7 +47,7 @@ func NewPillarRegistry() *PillarRegistry {
 
 // Register adds a Pillar and tracks registration order.
 // Panics if a Pillar with the same Name() is already registered.
-func (r *PillarRegistry) Register(p Pillar) {
+func (r *pillarRegistry) Register(p Pillar) {
 	name := p.Name()
 	if _, exists := r.pillars[name]; exists {
 		panic(fmt.Sprintf("atlas: duplicate pillar name %q", name))
@@ -58,7 +57,7 @@ func (r *PillarRegistry) Register(p Pillar) {
 }
 
 // Pillars returns the registered pillars in registration order.
-func (r *PillarRegistry) Pillars() []Pillar {
+func (r *pillarRegistry) Pillars() []Pillar {
 	result := make([]Pillar, 0, len(r.pillarOrder))
 	for _, name := range r.pillarOrder {
 		result = append(result, r.pillars[name])
@@ -66,9 +65,9 @@ func (r *PillarRegistry) Pillars() []Pillar {
 	return result
 }
 
-// UsePillar retrieves a registered Pillar by concrete type.
+// usePillar retrieves a registered Pillar by concrete type.
 // Panics if no Pillar of the given type is found.
-func UsePillar[T Pillar](r *PillarRegistry) T {
+func usePillar[T Pillar](r *pillarRegistry) T {
 	for _, p := range r.pillars {
 		if t, ok := p.(T); ok {
 			return t
@@ -78,9 +77,9 @@ func UsePillar[T Pillar](r *PillarRegistry) T {
 	panic(fmt.Sprintf("atlas: pillar %T not registered", zero))
 }
 
-// TryUsePillar retrieves a registered Pillar by concrete type without panicking.
+// tryUsePillar retrieves a registered Pillar by concrete type without panicking.
 // Returns the pillar and true if found, zero value and false otherwise.
-func TryUsePillar[T Pillar](r *PillarRegistry) (T, bool) {
+func tryUsePillar[T Pillar](r *pillarRegistry) (T, bool) {
 	for _, p := range r.pillars {
 		if t, ok := p.(T); ok {
 			return t, true

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -103,6 +104,13 @@ func (p *middlewarePillar) Middleware() []gin.HandlerFunc {
 	}
 }
 
+// pillarOpt is a helper that returns an Option registering a Pillar directly.
+func pillarOpt(p atlas.Pillar) atlas.Option {
+	return func(a *atlas.Atlas) {
+		a.Register(p)
+	}
+}
+
 // --- tests ---
 
 func TestNewInitsPillarsInOrder(t *testing.T) {
@@ -115,9 +123,9 @@ func TestNewInitsPillarsInOrder(t *testing.T) {
 
 	_ = atlas.New("order-test",
 		atlas.WithConfigPaths(dir),
-		atlas.WithPillar(pA),
-		atlas.WithPillar(pB),
-		atlas.WithPillar(pC),
+		pillarOpt(pA),
+		pillarOpt(pB),
+		pillarOpt(pC),
 	)
 
 	if len(order) != 3 {
@@ -148,14 +156,14 @@ func TestNewPanicsOnInitFailure(t *testing.T) {
 		if !ok {
 			t.Fatalf("panic value is not a string: %v", r)
 		}
-		if !(contains(msg, "broken") && contains(msg, "connection refused")) {
+		if !(strings.Contains(msg, "broken") && strings.Contains(msg, "connection refused")) {
 			t.Fatalf("panic message should mention pillar name and error, got: %s", msg)
 		}
 	}()
 
 	_ = atlas.New("panic-test",
 		atlas.WithConfigPaths(dir),
-		atlas.WithPillar(pBad),
+		pillarOpt(pBad),
 	)
 }
 
@@ -201,9 +209,9 @@ func TestShutdownReversesOrder(t *testing.T) {
 
 	a := atlas.New("shutdown-test",
 		atlas.WithConfigPaths(dir),
-		atlas.WithPillar(pA),
-		atlas.WithPillar(pB),
-		atlas.WithPillar(pC),
+		pillarOpt(pA),
+		pillarOpt(pB),
+		pillarOpt(pC),
 	)
 
 	// We cannot call the private shutdown method directly, but we can
@@ -253,7 +261,7 @@ func TestHealthEndpoints(t *testing.T) {
 			path:       "/healthz",
 			pillar:     &healthPillar{name: "db", healthy: true},
 			wantStatus: http.StatusOK,
-			wantBody:   "ok",
+			wantBody:   "healthy",
 		},
 		{
 			name:       "healthz unhealthy",
@@ -263,18 +271,18 @@ func TestHealthEndpoints(t *testing.T) {
 			wantBody:   "unhealthy",
 		},
 		{
-			name:       "livez always ok",
+			name:       "livez always healthy",
 			path:       "/livez",
 			pillar:     &healthPillar{name: "db", healthy: false},
 			wantStatus: http.StatusOK,
-			wantBody:   "ok",
+			wantBody:   "healthy",
 		},
 		{
 			name:       "readyz healthy",
 			path:       "/readyz",
 			pillar:     &healthPillar{name: "db", healthy: true},
 			wantStatus: http.StatusOK,
-			wantBody:   "ok",
+			wantBody:   "healthy",
 		},
 		{
 			name:       "readyz unhealthy",
@@ -289,7 +297,7 @@ func TestHealthEndpoints(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := atlas.New("health-test",
 				atlas.WithConfigPaths(dir),
-				atlas.WithPillar(tt.pillar),
+				pillarOpt(tt.pillar),
 			)
 
 			w := httptest.NewRecorder()
@@ -306,7 +314,7 @@ func TestHealthEndpoints(t *testing.T) {
 			}
 			status, _ := body["status"].(string)
 			if status != tt.wantBody {
-				t.Fatalf("body status: want %q, got %q", tt.wantBody, status)
+				t.Fatalf("body status: want %q, got %q (body: %s)", tt.wantBody, status, w.Body.String())
 			}
 		})
 	}
@@ -341,7 +349,7 @@ func TestPillarMiddlewareProvider(t *testing.T) {
 
 	a := atlas.New("mw-test",
 		atlas.WithConfigPaths(dir),
-		atlas.WithPillar(mp),
+		pillarOpt(mp),
 	)
 
 	// Register a test route to verify middleware runs on it.
@@ -372,7 +380,7 @@ func TestUseAndTryUse(t *testing.T) {
 
 	a := atlas.New("use-test",
 		atlas.WithConfigPaths(dir),
-		atlas.WithPillar(hp),
+		pillarOpt(hp),
 	)
 
 	// Use should return the pillar.
@@ -392,18 +400,4 @@ func TestUseAndTryUse(t *testing.T) {
 	if ok {
 		t.Fatal("TryUse should return false for unregistered type")
 	}
-}
-
-// contains is a helper to check substring presence.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchSubstring(s, substr)
-}
-
-func searchSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

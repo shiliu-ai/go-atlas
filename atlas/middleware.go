@@ -61,10 +61,21 @@ func (a *Atlas) coreMiddleware() []gin.HandlerFunc {
 
 	// Rate limit: only add if configured.
 	if a.coreCfg.Middleware.RateLimit.Rate > 0 {
-		mw = append(mw, rateLimitMiddleware(rateLimitConfig{
+		store := &memStore{
+			buckets: make(map[string]*rlBucket),
+			rate:    a.coreCfg.Middleware.RateLimit.Rate,
+			window:  a.coreCfg.Middleware.RateLimit.Window,
+			done:    make(chan struct{}),
+		}
+		a.rateLimitStore = store
+
+		go store.cleanup()
+
+		cfg := rateLimitConfig{
 			Rate:   a.coreCfg.Middleware.RateLimit.Rate,
 			Window: a.coreCfg.Middleware.RateLimit.Window,
-		}))
+		}
+		mw = append(mw, rateLimitMiddleware(cfg, store))
 	}
 
 	return mw
@@ -225,18 +236,10 @@ type rateLimitConfig struct {
 }
 
 // rateLimitMiddleware returns a local in-memory token-bucket rate limiter middleware.
-func rateLimitMiddleware(cfg rateLimitConfig) gin.HandlerFunc {
+func rateLimitMiddleware(cfg rateLimitConfig, store *memStore) gin.HandlerFunc {
 	if cfg.KeyFunc == nil {
 		cfg.KeyFunc = func(c *gin.Context) string { return c.ClientIP() }
 	}
-
-	store := &memStore{
-		buckets: make(map[string]*rlBucket),
-		rate:    cfg.Rate,
-		window:  cfg.Window,
-	}
-
-	go store.cleanup()
 
 	return func(c *gin.Context) {
 		key := cfg.KeyFunc(c)
@@ -259,6 +262,7 @@ type memStore struct {
 	buckets map[string]*rlBucket
 	rate    int
 	window  time.Duration
+	done    chan struct{}
 }
 
 func (s *memStore) allow(key string) bool {
@@ -282,14 +286,24 @@ func (s *memStore) allow(key string) bool {
 func (s *memStore) cleanup() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.mu.Lock()
-		now := time.Now()
-		for k, b := range s.buckets {
-			if now.Sub(b.lastReset) > s.window*2 {
-				delete(s.buckets, k)
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			now := time.Now()
+			for k, b := range s.buckets {
+				if now.Sub(b.lastReset) > s.window*2 {
+					delete(s.buckets, k)
+				}
 			}
+			s.mu.Unlock()
 		}
-		s.mu.Unlock()
 	}
+}
+
+// stop terminates the cleanup goroutine.
+func (s *memStore) stop() {
+	close(s.done)
 }

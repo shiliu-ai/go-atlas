@@ -40,8 +40,3 @@ func WithMiddleware(mw ...gin.HandlerFunc) Option {
 func WithoutDefaultMiddleware() Option {
 	return func(a *Atlas) { a.skipDefaultMW = true }
 }
-
-// WithPillar registers a Pillar to be initialized during Atlas setup.
-func WithPillar(p Pillar) Option {
-	return func(a *Atlas) { a.pendingPillars = append(a.pendingPillars, p) }
-}

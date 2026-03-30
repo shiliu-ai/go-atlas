@@ -54,7 +54,7 @@ func (a *Atlas) run(ctx context.Context) error {
 }
 
 // shutdown performs graceful shutdown: stop server first, then Pillars
-// in reverse registration order.
+// in reverse registration order, then clean up internal resources.
 func (a *Atlas) shutdown(ctx context.Context) error {
 	a.logger.Info(ctx, "atlas shutting down", log.F("name", a.name))
 
@@ -74,6 +74,11 @@ func (a *Atlas) shutdown(ctx context.Context) error {
 				log.F("error", err),
 			)
 		}
+	}
+
+	// Stop rate limiter cleanup goroutine if active.
+	if a.rateLimitStore != nil {
+		a.rateLimitStore.stop()
 	}
 
 	a.logger.Info(ctx, "atlas stopped", log.F("name", a.name))
