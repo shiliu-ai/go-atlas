@@ -50,7 +50,7 @@ func (a *Atlas) run(ctx context.Context) error {
 		a.logger.Info(ctx, "context cancelled")
 	}
 
-	return a.shutdown(ctx)
+	return a.shutdown(context.Background())
 }
 
 // shutdown performs graceful shutdown: stop server first, then Pillars

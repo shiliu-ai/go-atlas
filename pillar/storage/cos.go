@@ -182,7 +182,10 @@ func (c *COSStorage) WithBucket(bucket string) Storage {
 		// fallback: cannot parse, return a copy with new bucket in URL
 		newCfg := c.cfg
 		newCfg.BucketURL = strings.Replace(c.cfg.BucketURL, c.bucketURL.Host, bucket+".cos."+host, 1)
-		s, _ := NewCOS(newCfg)
+		s, err := NewCOS(newCfg)
+		if err != nil {
+			panic(fmt.Sprintf("storage: WithBucket(%q): %v", bucket, err))
+		}
 		return s
 	}
 	// parts[0] = "<bucket>-<appid>", parts[1] = "<region>.myqcloud.com"
@@ -190,15 +193,16 @@ func (c *COSStorage) WithBucket(bucket string) Storage {
 	// find last "-" to separate bucket from appid
 	idx := strings.LastIndex(bucketAppID, "-")
 	if idx < 0 {
-		newCfg := c.cfg
-		s, _ := NewCOS(newCfg)
-		return s
+		panic(fmt.Sprintf("storage: WithBucket(%q): cannot parse appid from host %q", bucket, host))
 	}
 	appID := bucketAppID[idx+1:]
 	newHost := fmt.Sprintf("%s-%s.cos.%s", bucket, appID, parts[1])
 	newCfg := c.cfg
 	newCfg.BucketURL = fmt.Sprintf("%s://%s", c.bucketURL.Scheme, newHost)
-	s, _ := NewCOS(newCfg)
+	s, err := NewCOS(newCfg)
+	if err != nil {
+		panic(fmt.Sprintf("storage: WithBucket(%q): %v", bucket, err))
+	}
 	return s
 }
 

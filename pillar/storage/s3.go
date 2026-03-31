@@ -107,10 +107,11 @@ func (s *S3Storage) Exists(ctx context.Context, key string) (bool, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		if errors.Is(wrapS3Error(err), ErrNotFound) {
+		wrapped := wrapS3Error(err)
+		if errors.Is(wrapped, ErrNotFound) {
 			return false, nil
 		}
-		return false, wrapS3Error(err)
+		return false, wrapped
 	}
 	return true, nil
 }

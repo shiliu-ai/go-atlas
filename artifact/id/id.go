@@ -35,12 +35,25 @@ func NanoID(size ...int) string {
 		n = size[0]
 	}
 
-	bytes := make([]byte, n)
-	_, _ = rand.Read(bytes)
+	alphabetLen := byte(len(defaultAlphabet))
+	// Rejection threshold: largest multiple of alphabetLen that fits in a byte.
+	// Values >= threshold are rejected to eliminate modulo bias.
+	threshold := 256 - (256 % int(alphabetLen)) // 256 - (256%62) = 252
 
 	id := make([]byte, n)
-	for i := range n {
-		id[i] = defaultAlphabet[bytes[i]%byte(len(defaultAlphabet))]
+	buf := make([]byte, n*2) // over-allocate to reduce rand calls
+	for filled := 0; filled < n; {
+		_, _ = rand.Read(buf)
+		for _, b := range buf {
+			if int(b) >= threshold {
+				continue
+			}
+			id[filled] = defaultAlphabet[b%alphabetLen]
+			filled++
+			if filled == n {
+				break
+			}
+		}
 	}
 	return string(id)
 }
@@ -71,12 +84,22 @@ func ShortID(size ...int) string {
 		ts /= int64(base)
 	}
 
-	// Fill the rest with crypto/rand random characters.
+	// Fill the rest with crypto/rand random characters (rejection sampling).
 	if n > timePartLen {
-		randomBytes := make([]byte, n-timePartLen)
-		_, _ = rand.Read(randomBytes)
-		for i := timePartLen; i < n; i++ {
-			id[i] = defaultAlphabet[randomBytes[i-timePartLen]%byte(base)]
+		threshold := 256 - (256 % base)
+		buf := make([]byte, (n-timePartLen)*2)
+		for filled := timePartLen; filled < n; {
+			_, _ = rand.Read(buf)
+			for _, b := range buf {
+				if int(b) >= threshold {
+					continue
+				}
+				id[filled] = defaultAlphabet[int(b)%base]
+				filled++
+				if filled == n {
+					break
+				}
+			}
 		}
 	}
 
@@ -157,12 +180,16 @@ const numericEpoch = int64(1577836800000) // 2020-01-01 00:00:00 UTC in ms
 var numericSequence uint64
 
 func numericNextSeq() int64 {
-	seq := atomic.AddUint64(&numericSequence, 1)
-	if seq >= 10000 {
-		atomic.StoreUint64(&numericSequence, 0)
-		seq = atomic.AddUint64(&numericSequence, 1)
+	for {
+		old := atomic.LoadUint64(&numericSequence)
+		next := old + 1
+		if next >= 10000 {
+			next = 1
+		}
+		if atomic.CompareAndSwapUint64(&numericSequence, old, next) {
+			return int64(next)
+		}
 	}
-	return int64(seq)
 }
 
 // NumericID generates a unique 16-digit int64 ID that is monotonically increasing.

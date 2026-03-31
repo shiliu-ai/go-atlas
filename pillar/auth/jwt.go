@@ -86,7 +86,7 @@ func (j *JWT) Parse(tokenStr string) (*Claims, error) {
 	// Fallback: parse as MapClaims (skip exp validation for legacy tokens).
 	mapToken, mapErr := jwt.Parse(tokenStr, keyFunc, jwt.WithoutClaimsValidation())
 	if mapErr != nil {
-		return nil, fmt.Errorf("auth: parse token: %w", err)
+		return nil, fmt.Errorf("auth: parse token: %w", mapErr)
 	}
 	mc, ok := mapToken.Claims.(jwt.MapClaims)
 	if !ok || !mapToken.Valid {

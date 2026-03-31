@@ -1,6 +1,7 @@
 package atlas
 
 import (
+	"context"
 	"net/http"
 	"net/http/httputil"
 	"runtime/debug"
@@ -106,7 +107,11 @@ func recoveryMiddleware(logger log.Logger) gin.HandlerFunc {
 					fields = append(fields, log.F("request", reqDump))
 				}
 
-				logger.Error(c.Request.Context(), "panic recovered", fields...)
+				ctx := context.Background()
+				if c.Request != nil {
+					ctx = c.Request.Context()
+				}
+				logger.Error(ctx, "panic recovered", fields...)
 				c.AbortWithStatus(http.StatusInternalServerError)
 			}
 		}()
@@ -216,6 +221,9 @@ func corsMiddleware(cfg corsConfig) gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Methods", strings.Join(cfg.AllowMethods, ","))
 		c.Header("Access-Control-Allow-Headers", strings.Join(cfg.AllowHeaders, ","))
 		c.Header("Access-Control-Max-Age", strconv.Itoa(cfg.MaxAge))
+		if origin != "*" {
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
 
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

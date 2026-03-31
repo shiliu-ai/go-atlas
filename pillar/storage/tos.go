@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -96,12 +97,11 @@ func (t *TOSStorage) Exists(ctx context.Context, key string) (bool, error) {
 		Key:    key,
 	})
 	if err != nil {
-		if isNotFound := wrapTOSError(err); isNotFound != nil {
-			if strings.Contains(err.Error(), "404") {
-				return false, nil
-			}
+		wrapped := wrapTOSError(err)
+		if errors.Is(wrapped, ErrNotFound) {
+			return false, nil
 		}
-		return false, wrapTOSError(err)
+		return false, wrapped
 	}
 	return true, nil
 }
