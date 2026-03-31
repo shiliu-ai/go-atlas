@@ -61,18 +61,23 @@ func (t *TencentEmail) Send(ctx context.Context, req *SendRequest) error {
 		request.ReplyToAddresses = common.StringPtr(req.ReplyTo)
 	}
 
-	if req.TemplateID != "" {
+	templateID := req.TemplateID
+	if templateID == "" {
+		templateID = t.cfg.TemplateID
+	}
+
+	if templateID != "" {
 		// Template mode.
-		templateID, err := strconv.ParseUint(req.TemplateID, 10, 64)
+		tid, err := strconv.ParseUint(templateID, 10, 64)
 		if err != nil {
-			return fmt.Errorf("email/tencent: invalid template ID %q: %w", req.TemplateID, err)
+			return fmt.Errorf("email/tencent: invalid template ID %q: %w", templateID, err)
 		}
 		templateData, err := json.Marshal(req.TemplateData)
 		if err != nil {
 			return fmt.Errorf("email/tencent: marshal template data: %w", err)
 		}
 		request.Template = &tcses.Template{
-			TemplateID:   common.Uint64Ptr(templateID),
+			TemplateID:   common.Uint64Ptr(tid),
 			TemplateData: common.StringPtr(string(templateData)),
 		}
 		if req.Subject != "" {

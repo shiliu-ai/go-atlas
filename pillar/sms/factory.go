@@ -14,11 +14,12 @@ type Config struct {
 
 // TencentConfig holds Tencent Cloud SMS configuration.
 type TencentConfig struct {
-	SecretID  string `mapstructure:"secret_id"`
-	SecretKey string `mapstructure:"secret_key"`
-	AppID     string `mapstructure:"app_id"` // SmsSdkAppId
-	Sign      string `mapstructure:"sign"`   // Default SMS signature
-	Region    string `mapstructure:"region"` // Default: "ap-guangzhou"
+	SecretID   string `mapstructure:"secret_id"`
+	SecretKey  string `mapstructure:"secret_key"`
+	AppID      string `mapstructure:"app_id"`      // SmsSdkAppId
+	Sign       string `mapstructure:"sign"`         // Default SMS signature
+	TemplateID string `mapstructure:"template_id"`  // Default SMS template ID
+	Region     string `mapstructure:"region"`       // Default: "ap-guangzhou"
 }
 
 // newSMS creates an SMS instance based on the driver specified in Config.

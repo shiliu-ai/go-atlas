@@ -24,10 +24,11 @@ type SMTPConfig struct {
 
 // TencentConfig holds Tencent Cloud SES configuration.
 type TencentConfig struct {
-	SecretID  string `mapstructure:"secret_id"`
-	SecretKey string `mapstructure:"secret_key"`
-	From      string `mapstructure:"from"`   // Sender address (must be verified in SES console)
-	Region    string `mapstructure:"region"` // Default: "ap-hongkong"
+	SecretID   string `mapstructure:"secret_id"`
+	SecretKey  string `mapstructure:"secret_key"`
+	From       string `mapstructure:"from"`        // Sender address (must be verified in SES console)
+	TemplateID string `mapstructure:"template_id"` // Default template ID
+	Region     string `mapstructure:"region"`       // Default: "ap-hongkong"
 }
 
 // newEmail creates an Email instance based on the driver specified in Config.

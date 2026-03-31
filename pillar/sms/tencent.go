@@ -43,10 +43,15 @@ func (t *TencentSMS) Send(ctx context.Context, req *SendRequest) error {
 		sign = t.cfg.Sign
 	}
 
+	templateID := req.TemplateID
+	if templateID == "" {
+		templateID = t.cfg.TemplateID
+	}
+
 	request := tcsms.NewSendSmsRequest()
 	request.SmsSdkAppId = common.StringPtr(t.cfg.AppID)
 	request.SignName = common.StringPtr(sign)
-	request.TemplateId = common.StringPtr(req.TemplateID)
+	request.TemplateId = common.StringPtr(templateID)
 	request.PhoneNumberSet = common.StringPtrs([]string{req.Phone})
 	if len(req.Params) > 0 {
 		request.TemplateParamSet = common.StringPtrs(req.Params)
