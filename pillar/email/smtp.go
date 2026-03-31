@@ -52,7 +52,7 @@ func (s *smtpClient) Send(_ context.Context, req *SendRequest) error {
 
 	msg := s.buildMessage(from, req)
 	recipients := s.collectRecipients(req)
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
 	auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 
 	if s.cfg.TLS {
@@ -62,7 +62,7 @@ func (s *smtpClient) Send(_ context.Context, req *SendRequest) error {
 }
 
 func (s *smtpClient) Ping(_ context.Context) error {
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("email/smtp: ping: %w", err)
@@ -131,15 +131,15 @@ func (s *smtpClient) buildMessage(from string, req *SendRequest) []byte {
 	var buf bytes.Buffer
 
 	// Headers
-	buf.WriteString(fmt.Sprintf("From: %s\r\n", from))
-	buf.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(req.To, ", ")))
+	fmt.Fprintf(&buf, "From: %s\r\n", from)
+	fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(req.To, ", "))
 	if len(req.Cc) > 0 {
-		buf.WriteString(fmt.Sprintf("Cc: %s\r\n", strings.Join(req.Cc, ", ")))
+		fmt.Fprintf(&buf, "Cc: %s\r\n", strings.Join(req.Cc, ", "))
 	}
 	if req.ReplyTo != "" {
-		buf.WriteString(fmt.Sprintf("Reply-To: %s\r\n", req.ReplyTo))
+		fmt.Fprintf(&buf, "Reply-To: %s\r\n", req.ReplyTo)
 	}
-	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", encodeHeader(req.Subject)))
+	fmt.Fprintf(&buf, "Subject: %s\r\n", encodeHeader(req.Subject))
 	buf.WriteString("MIME-Version: 1.0\r\n")
 
 	contentType := string(req.ContentType)
@@ -149,13 +149,13 @@ func (s *smtpClient) buildMessage(from string, req *SendRequest) []byte {
 
 	if len(req.Attachments) == 0 {
 		// Simple message without attachments.
-		buf.WriteString(fmt.Sprintf("Content-Type: %s; charset=UTF-8\r\n", contentType))
+		fmt.Fprintf(&buf, "Content-Type: %s; charset=UTF-8\r\n", contentType)
 		buf.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
 		buf.WriteString(base64.StdEncoding.EncodeToString([]byte(req.Body)))
 	} else {
 		// Multipart message with attachments.
 		writer := multipart.NewWriter(&buf)
-		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\r\n\r\n", writer.Boundary()))
+		fmt.Fprintf(&buf, "Content-Type: multipart/mixed; boundary=%s\r\n\r\n", writer.Boundary())
 
 		// Body part
 		bodyHeader := make(textproto.MIMEHeader)

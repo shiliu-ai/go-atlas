@@ -67,6 +67,25 @@ sms:
       sign: ""
       region: "ap-guangzhou"
 
+email:
+  default:
+    driver: "tencentcloud"
+    tencent:
+      secret_id: ""
+      secret_key: ""
+      from: ""
+      region: "ap-hongkong"
+  # Example: SMTP instance for verification codes
+  # verify:
+  #   driver: "smtp"
+  #   smtp:
+  #     host: "smtp.example.com"
+  #     port: 465
+  #     username: ""
+  #     password: ""
+  #     from: "verify@example.com"
+  #     tls: true
+
 tracing:
   service_name: "example-service"
   endpoint: "localhost:4318"
