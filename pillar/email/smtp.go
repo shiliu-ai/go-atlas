@@ -61,9 +61,10 @@ func (s *smtpClient) Send(_ context.Context, req *SendRequest) error {
 	return smtp.SendMail(addr, auth, from, recipients, msg)
 }
 
-func (s *smtpClient) Ping(_ context.Context) error {
+func (s *smtpClient) Ping(ctx context.Context) error {
 	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	d := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("email/smtp: ping: %w", err)
 	}
@@ -121,9 +122,9 @@ func (s *smtpClient) collectRecipients(req *SendRequest) []string {
 }
 
 // encodeHeader encodes a header value using RFC 2047 if it contains non-ASCII characters.
+// QEncoding returns the value unchanged for pure ASCII strings.
 func encodeHeader(value string) string {
-	encoder := mime.BEncoding
-	return encoder.Encode("UTF-8", value)
+	return mime.QEncoding.Encode("UTF-8", value)
 }
 
 // buildMessage constructs the full MIME message.
@@ -140,6 +141,8 @@ func (s *smtpClient) buildMessage(from string, req *SendRequest) []byte {
 		fmt.Fprintf(&buf, "Reply-To: %s\r\n", req.ReplyTo)
 	}
 	fmt.Fprintf(&buf, "Subject: %s\r\n", encodeHeader(req.Subject))
+	fmt.Fprintf(&buf, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123Z))
+	fmt.Fprintf(&buf, "Message-ID: <%d@%s>\r\n", time.Now().UnixNano(), s.cfg.Host)
 	buf.WriteString("MIME-Version: 1.0\r\n")
 
 	contentType := string(req.ContentType)
