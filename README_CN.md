@@ -2,9 +2,11 @@
 
 [English](README.md)
 
-一套精练的 Go 后端框架，构建于 Gin 之上，为追求简洁与效率的团队而设计。
+> **Atlas**（阿特拉斯）——古希腊神话中肩扛苍穹的泰坦巨神。以双肩承载天穹，亦以框架承载服务。
 
-Atlas 将认证、存储、缓存、链路追踪、服务间通信等常用基础设施整合为一组内聚的构建模块，采用**四域架构**，开箱即用，零样板代码。
+Atlas 是一套精练的 Go 后端服务框架，构建于 Gin 之上，为追求简洁与效率的团队而设计。
+
+它将认证、存储、缓存、链路追踪、服务间通信等后端常用基础设施整合为一组内聚的构建模块，采用灵感源自希腊神话的**四域架构**——埃忒耳/以太（Aether）、立柱（Pillar）、神器（Artifact）各司其职，开箱即用，零样板代码。
 
 ## 快速开始
 
@@ -13,8 +15,8 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    atlas "github.com/shiliu-ai/go-atlas"
     "github.com/shiliu-ai/go-atlas/aether/response"
+    "github.com/shiliu-ai/go-atlas/atlas"
 )
 
 func main() {
@@ -42,23 +44,26 @@ go get github.com/shiliu-ai/go-atlas
 
 ## 架构概览
 
-Atlas 按四个领域组织代码，命名均源自希腊神话：
+Atlas 按四个领域组织代码，命名源自希腊神话，但每个名称都有明确的工程对应：
 
-| 领域 | 名称 | 含义 | 职责 |
-|------|------|------|------|
-| 核心 | **Atlas** | 阿特拉斯 | 框架编排器 |
-| 内置 | **Aether** | 以太 | 必备基础组件 |
-| 扩展 | **Pillar** | 立柱 | 可选生命周期组件 |
-| 工具 | **Artifact** | 神器 | 独立工具集 |
+| 领域 | 名称 | 神话含义 | 对应传统概念 | 放什么 |
+|------|------|----------|-------------|--------|
+| 核心 | **Atlas** | 擎天的泰坦 | **框架本体** | 配置、服务器、生命周期、中间件引擎 |
+| 内置 | **Aether** | 弥漫天际的神圣空气 | **核心库**（类比标准库 `net/http`） | errors、i18n、log、response——始终可用，无需配置 |
+| 扩展 | **Pillar** | 撑起苍穹的石柱 | **插件 / 模块** | auth、database、cache、storage——按需注册，有生命周期 |
+| 工具 | **Artifact** | 众神锻造的器物 | **工具包**（类比 `utils/` 目录） | crypto、ID 生成、分页——纯函数，不依赖框架 |
+
+> **速查口诀**：需要 `atlas.New()` 才能用的是 **Pillar**；任何 Go 项目都能直接用的是 **Artifact**；不用额外 import 就自动生效的是 **Aether**。
 
 ```
-*.go                核心（package atlas）— 配置、服务器、生命周期、中间件、Pillar 接口
-aether/             以太 — 内置必备组件
-  ├── errors        结构化错误码
-  ├── i18n          国际化
-  ├── log           结构化日志
-  └── response      统一 API 响应
-pillar/             立柱 — 通过 Pillar() 注册的可插拔组件
+atlas/              泰坦 — 框架核心
+  *.go              配置、服务器、生命周期、中间件、Pillar 接口
+aether/             以太 — 内置必备组件（始终可用）
+  ├── errors        结构化错误码 → HTTP 状态码映射
+  ├── i18n          国际化，Accept-Language 自动检测
+  ├── log           结构化日志（基于 slog）
+  └── response      统一 JSON API 响应
+pillar/             立柱 — 可插拔基础设施（通过 Pillar() 按需注册）
   ├── auth          JWT 认证
   ├── cache         Redis 缓存 + 分布式锁
   ├── database      GORM（MySQL/PostgreSQL，多命名连接）
@@ -68,38 +73,54 @@ pillar/             立柱 — 通过 Pillar() 注册的可插拔组件
   ├── sms           短信发送（腾讯云）
   ├── storage       对象存储（S3/COS/OSS/TOS）
   └── tracing       OpenTelemetry 分布式链路追踪
-artifact/           神器 — 独立辅助工具（加密、ID 生成、分页、校验）
+artifact/           神器 — 独立工具集（零框架依赖）
+  ├── crypto        密码哈希、AES-GCM 加密
+  ├── id            UUID、NanoID、ShortID、NumericID、Snowflake
+  ├── jsonutil      JSON 辅助工具
+  ├── pagination    分页绑定与响应
+  └── validate      请求绑定与校验
 ```
 
 ### Pillar 模式
 
-每个基础设施组件遵循相同的模式：
+Pillar 是**按需注册的基础设施模块**——可以理解为带生命周期管理的插件。Atlas 在启动时初始化它们，退出时按注册逆序优雅关停。
+
+每个 Pillar 遵循相同的两步模式：**注册 → 获取**。
 
 ```go
-// 1. 立柱：在 atlas.New() 中注册 Pillar
-a := atlas.New("my-service",
-    auth.Pillar(),
-    database.Pillar(),
-    cache.Pillar(),
+import (
+    "github.com/shiliu-ai/go-atlas/atlas"
+    "github.com/shiliu-ai/go-atlas/pillar/auth"       // ← Pillar 包
+    "github.com/shiliu-ai/go-atlas/pillar/database"
+    "github.com/shiliu-ai/go-atlas/pillar/cache"
 )
 
-// 2. 连线：通过 Of() 获取已初始化的实例
-jwt := auth.Of(a)
-dbm := database.Of(a)
-redis := cache.Of(a)
+// 第一步 — 注册：告诉 Atlas 你需要哪些 Pillar。
+//   每个 xxx.Pillar() 返回一个 atlas.Option，用于注册该模块。
+a := atlas.New("my-service",
+    auth.Pillar(),        // 注册 JWT 认证
+    database.Pillar(),    // 注册 GORM 数据库管理器
+    cache.Pillar(),       // 注册 Redis 缓存
+)
+
+// 第二步 — 获取：通过 xxx.Of(a) 获取已初始化的实例。
+//   类型安全——你拿到的是具体类型，而非接口。
+jwt   := auth.Of(a)       // *auth.JWT
+dbm   := database.Of(a)   // *database.Manager
+redis := cache.Of(a)      // *cache.RedisCache
 ```
 
-所有 Pillar 实现 `atlas.Pillar` 接口：
+底层所有 Pillar 实现 `atlas.Pillar` 接口：
 
 ```go
 type Pillar interface {
     Name() string
-    Init(core *Core) error
-    Stop(ctx context.Context) error
+    Init(core *Core) error        // 启动时调用
+    Stop(ctx context.Context) error // 关停时调用（注册逆序）
 }
 ```
 
-Pillar 可选实现 `Starter`（后台协程）、`HealthChecker`（健康检查）或 `MiddlewareProvider`（自动注入中间件）。
+Pillar 可选实现 `Starter`（后台协程）、`HealthChecker`（健康检查端点）或 `MiddlewareProvider`（自动注入中间件）。
 
 ## 配置
 
@@ -256,6 +277,7 @@ val, err := redis.Get(ctx, "key")
 l := redis.NewLock("my-lock", 10*time.Second)
 acquired, err := l.Acquire(ctx)
 defer l.Release(ctx)
+ok, err := l.Extend(ctx, 30*time.Second)  // 延长锁的 TTL
 ```
 
 ### 对象存储
@@ -339,6 +361,8 @@ resp, err := hc.Get(ctx, "https://api.example.com/data")
 body := resp.String()
 
 resp, err := hc.PostJSON(ctx, url, payload)
+resp, err := hc.PutJSON(ctx, url, payload)
+resp, err := hc.Delete(ctx, url)
 ```
 
 ### ID 生成
@@ -349,6 +373,7 @@ resp, err := hc.PostJSON(ctx, url, payload)
 id.UUID()                       // "550e8400-e29b-41d4-a716-446655440000"
 id.NanoID()                     // "V1StGXR8_Z5jdHi6B-myT"
 id.ShortID()                    // "0h7a8sK2x9pL3mN1"
+id.NumericID()                  // 1711929600001230001
 
 sf, _ := id.NewSnowflake(1)
 sf.MustGenerate()               // 182439823049723904

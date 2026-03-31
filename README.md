@@ -2,9 +2,11 @@
 
 [中文文档](README_CN.md)
 
+> **Atlas** — the Titan who bears the heavens on his shoulders. He carries the sky; this framework carries your services.
+
 A refined Go framework for building production-grade backend services. Built on Gin, designed for teams who value clarity over ceremony.
 
-Atlas provides a cohesive set of building blocks — authentication, storage, caching, tracing, inter-service communication, and more — wired together through a **four-domain architecture** with sensible defaults and zero boilerplate.
+Atlas provides a cohesive set of building blocks — authentication, storage, caching, tracing, inter-service communication, and more — wired together through a mythology-inspired **four-domain architecture**: Aether (built-in essentials), Pillar (pluggable infrastructure), and Artifact (standalone utilities), with sensible defaults and zero boilerplate.
 
 ## Quick Start
 
@@ -13,8 +15,8 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    atlas "github.com/shiliu-ai/go-atlas"
     "github.com/shiliu-ai/go-atlas/aether/response"
+    "github.com/shiliu-ai/go-atlas/atlas"
 )
 
 func main() {
@@ -42,23 +44,26 @@ Requires Go 1.25+.
 
 ## Architecture
 
-Atlas is organized into four domains, all rooted in Greek mythology:
+Atlas is organized into four domains. The names come from Greek mythology, but each maps directly to a familiar concept:
 
-| Domain | Name | Meaning | Role |
-|--------|------|---------|------|
-| Core | **Atlas** | The Titan | Framework orchestrator |
-| Built-in | **Aether** | The divine air | Essential, omnipresent components |
-| Extension | **Pillar** | The columns | Optional lifecycle components |
-| Toolkit | **Artifact** | Divine tools | Standalone utilities |
+| Domain | Name | Myth | In conventional terms | What goes here |
+|--------|------|------|-----------------------|----------------|
+| Core | **Atlas** | The Titan who holds the sky | **The framework itself** | Config, server, lifecycle, middleware engine |
+| Built-in | **Aether** | The divine air — everywhere, invisible | **Core libraries** (like `net/http` in stdlib) | errors, i18n, log, response — always available, no setup needed |
+| Extension | **Pillar** | The columns that hold up the sky | **Plugins / Modules** | auth, database, cache, storage — opt-in, with lifecycle |
+| Toolkit | **Artifact** | Divine tools forged by gods | **Utility packages** (like a `utils/` folder) | crypto, ID generation, pagination — pure functions, no framework dependency |
+
+> **Rule of thumb**: if you need `atlas.New()` to use it, it's a **Pillar**. If you can use it in any Go project, it's an **Artifact**. If it's always there without importing anything extra, it's **Aether**.
 
 ```
-*.go                Core (package atlas) — config, server, lifecycle, middleware, Pillar interface
-aether/             Built-in essentials
-  ├── errors        Structured error codes
-  ├── i18n          Internationalization
-  ├── log           Structured logging
-  └── response      Unified API responses
-pillar/             Infrastructure — pluggable components registered via Pillar()
+atlas/              The Titan — framework core
+  *.go              config, server, lifecycle, middleware, Pillar interface
+aether/             The divine air — built-in essentials (always available)
+  ├── errors        Structured error codes → HTTP status mapping
+  ├── i18n          Internationalization with Accept-Language detection
+  ├── log           Structured logging (slog-based)
+  └── response      Unified JSON API responses
+pillar/             The columns — pluggable infrastructure (opt-in via Pillar())
   ├── auth          JWT authentication
   ├── cache         Redis cache + distributed locks
   ├── database      GORM (MySQL/PostgreSQL, multiple named connections)
@@ -68,38 +73,54 @@ pillar/             Infrastructure — pluggable components registered via Pilla
   ├── sms           SMS sending (Tencent Cloud)
   ├── storage       Object storage (S3/COS/OSS/TOS)
   └── tracing       OpenTelemetry distributed tracing
-artifact/           Utilities — standalone helpers (crypto, ID generation, pagination, validation)
+artifact/           Divine tools — standalone utilities (zero framework dependency)
+  ├── crypto        Password hashing, AES-GCM encryption
+  ├── id            UUID, NanoID, ShortID, NumericID, Snowflake
+  ├── jsonutil      JSON helpers
+  ├── pagination    Page/size binding and response
+  └── validate      Request binding with validation
 ```
 
 ### Pillar Pattern
 
-Every infrastructure component follows the same pattern:
+Pillars are **opt-in infrastructure modules** — think of them as plugins with a managed lifecycle. Atlas initializes them at startup and shuts them down gracefully on exit.
+
+Every Pillar follows the same two-step pattern: **register → retrieve**.
 
 ```go
-// 1. Register Pillars as options in atlas.New()
-a := atlas.New("my-service",
-    auth.Pillar(),
-    database.Pillar(),
-    cache.Pillar(),
+import (
+    "github.com/shiliu-ai/go-atlas/atlas"
+    "github.com/shiliu-ai/go-atlas/pillar/auth"       // ← Pillar package
+    "github.com/shiliu-ai/go-atlas/pillar/database"
+    "github.com/shiliu-ai/go-atlas/pillar/cache"
 )
 
-// 2. Retrieve initialized instances with Of()
-jwt := auth.Of(a)
-dbm := database.Of(a)
-redis := cache.Of(a)
+// Step 1 — Register: tell Atlas which Pillars you need.
+//   Each xxx.Pillar() returns an atlas.Option that registers the module.
+a := atlas.New("my-service",
+    auth.Pillar(),        // registers JWT auth
+    database.Pillar(),    // registers GORM database manager
+    cache.Pillar(),       // registers Redis cache
+)
+
+// Step 2 — Retrieve: get the initialized instance via xxx.Of(a).
+//   This is type-safe — you get the concrete type, not an interface.
+jwt   := auth.Of(a)       // *auth.JWT
+dbm   := database.Of(a)   // *database.Manager
+redis := cache.Of(a)      // *cache.RedisCache
 ```
 
-All Pillars implement the `atlas.Pillar` interface:
+Under the hood, all Pillars implement the `atlas.Pillar` interface:
 
 ```go
 type Pillar interface {
     Name() string
-    Init(core *Core) error
-    Stop(ctx context.Context) error
+    Init(core *Core) error        // called at startup
+    Stop(ctx context.Context) error // called at shutdown (reverse order)
 }
 ```
 
-Pillars can optionally implement `Starter` (background goroutines), `HealthChecker` (health checks), or `MiddlewareProvider` (auto-injected middleware).
+Pillars can optionally implement `Starter` (background goroutines), `HealthChecker` (health endpoint), or `MiddlewareProvider` (auto-injected middleware).
 
 ## Configuration
 
@@ -256,6 +277,7 @@ val, err := redis.Get(ctx, "key")
 l := redis.NewLock("my-lock", 10*time.Second)
 acquired, err := l.Acquire(ctx)
 defer l.Release(ctx)
+ok, err := l.Extend(ctx, 30*time.Second)  // extend TTL
 ```
 
 ### Object Storage
@@ -339,6 +361,8 @@ resp, err := hc.Get(ctx, "https://api.example.com/data")
 body := resp.String()
 
 resp, err := hc.PostJSON(ctx, url, payload)
+resp, err := hc.PutJSON(ctx, url, payload)
+resp, err := hc.Delete(ctx, url)
 ```
 
 ### ID Generation
@@ -349,6 +373,7 @@ Four strategies for different needs (standalone utilities, no Pillar needed):
 id.UUID()                       // "550e8400-e29b-41d4-a716-446655440000"
 id.NanoID()                     // "V1StGXR8_Z5jdHi6B-myT"
 id.ShortID()                    // "0h7a8sK2x9pL3mN1"
+id.NumericID()                  // 1711929600001230001
 
 sf, _ := id.NewSnowflake(1)
 sf.MustGenerate()               // 182439823049723904
