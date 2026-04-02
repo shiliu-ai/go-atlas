@@ -37,6 +37,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -60,6 +61,52 @@ type Service interface {
 	DoRaw(ctx context.Context, method, path string, body any, opts ...RequestOption) (*httpclient.Response, error)
 }
 
+// ServiceError represents an error returned by an upstream service call.
+// It wraps the underlying *errors.Error so callers can distinguish upstream
+// errors from locally created ones via errors.As.
+type ServiceError struct {
+	serviceName string
+	method      string
+	path        string
+	err         *errors.Error
+}
+
+func (e *ServiceError) ServiceName() string { return e.serviceName }
+func (e *ServiceError) Method() string      { return e.method }
+func (e *ServiceError) Path() string        { return e.path }
+func (e *ServiceError) Code() errors.Code {
+	if e.err == nil {
+		return 0
+	}
+	return e.err.Code()
+}
+func (e *ServiceError) Message() string {
+	if e.err == nil {
+		return ""
+	}
+	return e.err.Message()
+}
+
+func (e *ServiceError) Error() string {
+	return fmt.Sprintf("serviceclient[%s] %s %s: %v", e.serviceName, e.method, e.path, e.err)
+}
+
+func (e *ServiceError) Unwrap() error {
+	if e.err == nil {
+		return nil
+	}
+	return e.err
+}
+
+func newServiceError(serviceName, method, path string, code errors.Code, message string) *ServiceError {
+	return &ServiceError{
+		serviceName: serviceName,
+		method:      method,
+		path:        path,
+		err:         errors.New(code, message),
+	}
+}
+
 // ServiceConfig holds configuration for a single upstream service.
 type ServiceConfig struct {
 	BaseURL    string        `mapstructure:"base_url"`
@@ -72,9 +119,11 @@ type ServiceConfig struct {
 type RequestOption func(*requestConfig)
 
 type requestConfig struct {
-	query   url.Values
-	headers http.Header
-	timeout time.Duration
+	query       url.Values
+	headers     http.Header
+	timeout     time.Duration
+	rawBody     io.Reader
+	contentType string
 }
 
 // WithQuery adds query parameters to the request URL.
@@ -104,6 +153,29 @@ func WithHeader(key, value string) RequestOption {
 // WithTimeout overrides the per-request timeout.
 func WithTimeout(d time.Duration) RequestOption {
 	return func(cfg *requestConfig) { cfg.timeout = d }
+}
+
+// WithRawBody provides a pre-built request body with an explicit content type,
+// bypassing the default JSON serialization. The caller is responsible for
+// constructing the body (e.g., multipart form, XML, binary stream).
+//
+// Panics if reader is nil or contentType is empty — these are programming
+// errors that should be caught at construction time, not deferred to request
+// execution.
+//
+// When WithRawBody is set, the body parameter of DoRaw (and typed wrappers
+// like Post) MUST be nil — passing both is a usage error and returns an error.
+func WithRawBody(reader io.Reader, contentType string) RequestOption {
+	if reader == nil {
+		panic("serviceclient: WithRawBody reader must not be nil")
+	}
+	if contentType == "" {
+		panic("serviceclient: WithRawBody content type must not be empty")
+	}
+	return func(cfg *requestConfig) {
+		cfg.rawBody = reader
+		cfg.contentType = contentType
+	}
 }
 
 // Client is an HTTP client bound to a specific upstream service.
@@ -145,9 +217,7 @@ func (c *Client) Name() string { return c.name }
 
 // buildURL constructs the full URL by joining the service base URL with the given path and query params.
 func (c *Client) buildURL(path string, query url.Values) string {
-	if path == "" {
-		path = ""
-	} else if !strings.HasPrefix(path, "/") {
+	if path != "" && !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 	u := c.baseURL + path
@@ -178,7 +248,16 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any, opts 
 	var req *http.Request
 	var err error
 
-	if body != nil {
+	switch {
+	case rcfg.rawBody != nil && body != nil:
+		return nil, fmt.Errorf("serviceclient[%s]: WithRawBody and body parameter are mutually exclusive", c.name)
+	case rcfg.rawBody != nil:
+		req, err = http.NewRequestWithContext(ctx, method, fullURL, rcfg.rawBody)
+		if err != nil {
+			return nil, fmt.Errorf("serviceclient[%s]: new request: %w", c.name, err)
+		}
+		req.Header.Set("Content-Type", rcfg.contentType)
+	case body != nil:
 		data, merr := json.Marshal(body)
 		if merr != nil {
 			return nil, fmt.Errorf("serviceclient[%s]: marshal body: %w", c.name, merr)
@@ -188,7 +267,7 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any, opts 
 			return nil, fmt.Errorf("serviceclient[%s]: new request: %w", c.name, err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-	} else {
+	default:
 		req, err = http.NewRequestWithContext(ctx, method, fullURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("serviceclient[%s]: new request: %w", c.name, err)
@@ -247,10 +326,9 @@ func Do[T any](ctx context.Context, c Service, method, path string, body any, re
 
 	// Non-2xx HTTP status.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := fmt.Sprintf("serviceclient[%s] %s %s: HTTP %d: %s",
-			c.Name(), method, path, resp.StatusCode, truncate(resp.String(), 200))
+		msg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateBytes(resp.Bytes(), 200))
 		span.SetStatus(codes.Error, msg)
-		return errors.New(errors.Code(resp.StatusCode), msg)
+		return newServiceError(c.Name(), method, path, errors.Code(resp.StatusCode), msg)
 	}
 
 	var envelope serviceResponse
@@ -263,7 +341,7 @@ func Do[T any](ctx context.Context, c Service, method, path string, body any, re
 	// Non-zero business code -> upstream business error.
 	if envelope.Code != 0 {
 		span.SetStatus(codes.Error, envelope.Message)
-		return errors.New(errors.Code(envelope.Code), envelope.Message)
+		return newServiceError(c.Name(), method, path, errors.Code(envelope.Code), envelope.Message)
 	}
 
 	if result != nil && len(envelope.Data) > 0 {
@@ -299,10 +377,10 @@ func Delete[T any](ctx context.Context, c Service, path string, result *T, opts 
 	return Do[T](ctx, c, http.MethodDelete, path, nil, result, opts...)
 }
 
-// truncate returns the first n bytes of s, appending "..." if truncated.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+// truncateBytes returns the first n bytes of b as a string, appending "..." if truncated.
+func truncateBytes(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
 	}
-	return s[:n] + "..."
+	return string(b[:n]) + "..."
 }
