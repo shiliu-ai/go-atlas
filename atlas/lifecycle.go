@@ -2,8 +2,10 @@ package atlas
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/shiliu-ai/go-atlas/aether/log"
@@ -19,6 +21,16 @@ func (a *Atlas) run(ctx context.Context) error {
 	for _, p := range a.registry.Pillars() {
 		if s, ok := p.(Starter); ok {
 			go func(s Starter, name string) {
+				defer func() {
+					if r := recover(); r != nil {
+						a.logger.Error(ctx, "pillar panic recovered",
+							log.F("pillar", name),
+							log.F("error", r),
+							log.F("stack", string(debug.Stack())),
+						)
+						errCh <- fmt.Errorf("pillar %s panicked: %v", name, r)
+					}
+				}()
 				a.logger.Info(ctx, "pillar starting", log.F("pillar", name))
 				if err := s.Start(ctx); err != nil {
 					errCh <- err

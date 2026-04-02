@@ -20,7 +20,8 @@ type R struct {
 	TraceID string `json:"trace_id,omitempty"`
 }
 
-func newR(c *gin.Context, code int, message string, data any) R {
+// NewR constructs a unified API response with trace ID extracted from the request context.
+func NewR(c *gin.Context, code int, message string, data any) R {
 	return R{
 		Code:    code,
 		Message: message,
@@ -32,7 +33,7 @@ func newR(c *gin.Context, code int, message string, data any) R {
 // OK sends a success response.
 func OK(c *gin.Context, data any) {
 	msg := i18n.T(c.Request.Context(), i18n.MsgOK)
-	c.JSON(http.StatusOK, newR(c, 0, msg, data))
+	c.JSON(http.StatusOK, NewR(c, 0, msg, data))
 }
 
 // Err sends an error response derived from an error.
@@ -51,12 +52,12 @@ func Err(c *gin.Context, err error) {
 		} else if status >= 400 {
 			log.Warn(c.Request.Context(), "client error", log.F("code", e.Code()), log.F("error", err))
 		}
-		c.JSON(status, newR(c, int(e.Code()), msg, nil))
+		c.JSON(status, NewR(c, int(e.Code()), msg, nil))
 		return
 	}
 	log.Error(c.Request.Context(), "unhandled error", log.F("error", err))
 	msg := i18n.T(c.Request.Context(), i18n.MsgInternalError)
-	c.JSON(http.StatusInternalServerError, newR(c, int(errors.CodeInternal), msg, nil))
+	c.JSON(http.StatusInternalServerError, NewR(c, int(errors.CodeInternal), msg, nil))
 }
 
 // AbortErr sends an error response and aborts the Gin handler chain.

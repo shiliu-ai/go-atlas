@@ -46,7 +46,7 @@ func (j *JWT) GeneratePair(userID string, metadata map[string]any) (*TokenPair, 
 		return nil, fmt.Errorf("auth: generate access token: %w", err)
 	}
 
-	refreshToken, err := j.generateToken(userID, nil, now, j.cfg.RefreshExpire)
+	refreshToken, err := j.generateToken(userID, metadata, now, j.cfg.RefreshExpire)
 	if err != nil {
 		return nil, fmt.Errorf("auth: generate refresh token: %w", err)
 	}
@@ -133,7 +133,7 @@ func (j *JWT) Refresh(refreshToken string) (*TokenPair, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: invalid refresh token: %w", err)
 	}
-	return j.GeneratePair(claims.UserID, nil)
+	return j.GeneratePair(claims.UserID, claims.Metadata)
 }
 
 func (j *JWT) generateToken(userID string, metadata map[string]any, now time.Time, expire time.Duration) (string, error) {

@@ -12,7 +12,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-
 	"github.com/shiliu-ai/go-atlas/aether/errors"
 	"github.com/shiliu-ai/go-atlas/aether/i18n"
 	"github.com/shiliu-ai/go-atlas/aether/log"
@@ -112,7 +111,9 @@ func recoveryMiddleware(logger log.Logger) gin.HandlerFunc {
 					ctx = c.Request.Context()
 				}
 				logger.Error(ctx, "panic recovered", fields...)
-				c.AbortWithStatus(http.StatusInternalServerError)
+				c.AbortWithStatusJSON(http.StatusInternalServerError,
+					response.NewR(c, int(errors.CodeInternal), "internal server error", nil),
+				)
 			}
 		}()
 		c.Next()
