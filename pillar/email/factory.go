@@ -28,7 +28,8 @@ type TencentConfig struct {
 	SecretKey  string `mapstructure:"secret_key"`
 	From       string `mapstructure:"from"`        // Sender address (must be verified in SES console)
 	TemplateID string `mapstructure:"template_id"` // Default template ID
-	Region     string `mapstructure:"region"`       // Default: "ap-hongkong"
+	Subject    string `mapstructure:"subject"`     // Default subject line (required by SES even in template mode)
+	Region     string `mapstructure:"region"`      // Default: "ap-hongkong"
 }
 
 // newEmail creates an Email instance based on the driver specified in Config.

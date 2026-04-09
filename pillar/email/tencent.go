@@ -80,8 +80,13 @@ func (t *TencentEmail) Send(ctx context.Context, req *SendRequest) error {
 			TemplateID:   common.Uint64Ptr(tid),
 			TemplateData: common.StringPtr(string(templateData)),
 		}
-		if req.Subject != "" {
-			request.Subject = common.StringPtr(req.Subject)
+		// Tencent SES requires Subject even in template mode.
+		subject := req.Subject
+		if subject == "" {
+			subject = t.cfg.Subject
+		}
+		if subject != "" {
+			request.Subject = common.StringPtr(subject)
 		}
 	} else {
 		// Direct mode. The Simple.Html and Simple.Text fields require base64-encoded content.
