@@ -79,6 +79,14 @@ func (m *Manager) Default() (Storage, error) {
 	return m.Get(DefaultName)
 }
 
+// Config returns the raw configuration for the named storage. Useful when
+// application code needs metadata (bucket, region, ...) without going through
+// the Storage interface.
+func (m *Manager) Config(name string) (Config, bool) {
+	cfg, ok := m.configs[name]
+	return cfg, ok
+}
+
 // Names returns all configured storage names.
 func (m *Manager) Names() []string {
 	names := make([]string, 0, len(m.configs))

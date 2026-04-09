@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/volcengine/ve-tos-golang-sdk/v2/tos"
@@ -13,18 +12,27 @@ import (
 )
 
 // TOSConfig holds Volcengine TOS configuration.
+//
+// Endpoint is used for all data-plane operations (Put/Get/...). PublicEndpoint
+// is optional: when set, pre-signed URLs are built against it instead of
+// Endpoint. This supports the common deployment where the service reaches TOS
+// over a private/internal endpoint for performance and cost, but must hand
+// signed URLs to browsers or external clients that can only resolve the
+// public endpoint.
 type TOSConfig struct {
-	Endpoint       string `mapstructure:"endpoint"`
-	Region         string `mapstructure:"region"`
-	Bucket         string `mapstructure:"bucket"`
-	AccessKeyID    string `mapstructure:"access_key_id"`
+	Endpoint        string `mapstructure:"endpoint"`
+	PublicEndpoint  string `mapstructure:"public_endpoint"`
+	Region          string `mapstructure:"region"`
+	Bucket          string `mapstructure:"bucket"`
+	AccessKeyID     string `mapstructure:"access_key_id"`
 	SecretAccessKey string `mapstructure:"secret_access_key"`
 }
 
 // TOSStorage implements Storage using Volcengine TOS.
 type TOSStorage struct {
-	client *tos.ClientV2
-	bucket string
+	client       *tos.ClientV2
+	publicClient *tos.ClientV2 // nil when PublicEndpoint is unset; falls back to client
+	bucket       string
 }
 
 // NewTOS creates a new Volcengine TOS storage client.
@@ -37,7 +45,28 @@ func NewTOS(cfg TOSConfig) (*TOSStorage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: create tos client: %w", err)
 	}
-	return &TOSStorage{client: client, bucket: cfg.Bucket}, nil
+	s := &TOSStorage{client: client, bucket: cfg.Bucket}
+	if cfg.PublicEndpoint != "" && cfg.PublicEndpoint != cfg.Endpoint {
+		publicClient, err := tos.NewClientV2(
+			cfg.PublicEndpoint,
+			tos.WithRegion(cfg.Region),
+			tos.WithCredentials(tos.NewStaticCredentials(cfg.AccessKeyID, cfg.SecretAccessKey)),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("storage: create tos public client: %w", err)
+		}
+		s.publicClient = publicClient
+	}
+	return s, nil
+}
+
+// presignClient returns the client used for pre-signed URL generation. It
+// falls back to the main client when PublicEndpoint is unset.
+func (t *TOSStorage) presignClient() *tos.ClientV2 {
+	if t.publicClient != nil {
+		return t.publicClient
+	}
+	return t.client
 }
 
 func (t *TOSStorage) Put(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error {
@@ -156,7 +185,7 @@ func (t *TOSStorage) Copy(ctx context.Context, srcKey, dstKey string) error {
 }
 
 func (t *TOSStorage) SignURL(ctx context.Context, key string, expire time.Duration) (string, error) {
-	out, err := t.client.PreSignedURL(&tos.PreSignedURLInput{
+	out, err := t.presignClient().PreSignedURL(&tos.PreSignedURLInput{
 		HTTPMethod: enum.HttpMethodGet,
 		Bucket:     t.bucket,
 		Key:        key,
@@ -178,7 +207,7 @@ func (t *TOSStorage) SignPutURL(ctx context.Context, key string, contentType str
 	if contentType != "" {
 		input.Header = map[string]string{"Content-Type": contentType}
 	}
-	out, err := t.client.PreSignedURL(input)
+	out, err := t.presignClient().PreSignedURL(input)
 	if err != nil {
 		return "", wrapTOSError(err)
 	}
@@ -186,7 +215,7 @@ func (t *TOSStorage) SignPutURL(ctx context.Context, key string, contentType str
 }
 
 func (t *TOSStorage) WithBucket(bucket string) Storage {
-	return &TOSStorage{client: t.client, bucket: bucket}
+	return &TOSStorage{client: t.client, publicClient: t.publicClient, bucket: bucket}
 }
 
 func (t *TOSStorage) Ping(ctx context.Context) error {
@@ -196,15 +225,28 @@ func (t *TOSStorage) Ping(ctx context.Context) error {
 	return wrapTOSError(err)
 }
 
+// wrapTOSError maps TOS SDK errors to the package's sentinel errors. It uses
+// the SDK's typed helpers (tos.StatusCode / tos.Code) rather than matching on
+// error strings, which is brittle and can misclassify errors whose message
+// happens to contain substrings like "404".
 func wrapTOSError(err error) error {
 	if err == nil {
 		return nil
 	}
-	errMsg := err.Error()
-	if strings.Contains(errMsg, "NoSuchKey") || strings.Contains(errMsg, "StatusCode=404") || strings.Contains(errMsg, "404") {
+	// Prefer the server-side error Code when available — it's the most precise
+	// signal (a 403 could be AccessDenied, SignatureDoesNotMatch, etc.).
+	switch tos.Code(err) {
+	case "NoSuchKey", "NoSuchBucket":
 		return fmt.Errorf("%w: %v", ErrNotFound, err)
+	case "AccessDenied":
+		return fmt.Errorf("%w: %v", ErrAccessDenied, err)
 	}
-	if strings.Contains(errMsg, "AccessDenied") || strings.Contains(errMsg, "StatusCode=403") || strings.Contains(errMsg, "403") {
+	// Fall back to HTTP status for errors without a parsed Code
+	// (e.g. UnexpectedStatusCodeError).
+	switch tos.StatusCode(err) {
+	case 404:
+		return fmt.Errorf("%w: %v", ErrNotFound, err)
+	case 403:
 		return fmt.Errorf("%w: %v", ErrAccessDenied, err)
 	}
 	return err
