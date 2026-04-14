@@ -15,19 +15,28 @@ import (
 )
 
 // S3Config holds S3-compatible storage configuration.
+//
+// Endpoint is used for all data-plane operations (Put/Get/...). PublicEndpoint
+// is optional: when set, pre-signed URLs are built against it instead of
+// Endpoint. This supports the common deployment where the service reaches the
+// object store over a private/internal endpoint for performance and cost, but
+// must hand signed URLs to browsers or external clients that can only resolve
+// the public endpoint.
 type S3Config struct {
-	Endpoint       string `mapstructure:"endpoint"`
-	Region         string `mapstructure:"region"`
-	Bucket         string `mapstructure:"bucket"`
-	AccessKeyID    string `mapstructure:"access_key_id"`
+	Endpoint        string `mapstructure:"endpoint"`
+	PublicEndpoint  string `mapstructure:"public_endpoint"`
+	Region          string `mapstructure:"region"`
+	Bucket          string `mapstructure:"bucket"`
+	AccessKeyID     string `mapstructure:"access_key_id"`
 	SecretAccessKey string `mapstructure:"secret_access_key"`
-	ForcePathStyle bool   `mapstructure:"force_path_style"`
+	ForcePathStyle  bool   `mapstructure:"force_path_style"`
 }
 
 // S3Storage implements Storage using S3-compatible API.
 type S3Storage struct {
-	client *s3.Client
-	bucket string
+	client       *s3.Client
+	publicClient *s3.Client // nil when PublicEndpoint is unset; falls back to client
+	bucket       string
 }
 
 // NewS3 creates a new S3-compatible storage client.
@@ -42,14 +51,29 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3Storage, error) {
 		return nil, fmt.Errorf("storage: load aws config: %w", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		if cfg.Endpoint != "" {
-			o.BaseEndpoint = aws.String(cfg.Endpoint)
-		}
-		o.UsePathStyle = cfg.ForcePathStyle
-	})
+	newClient := func(endpoint string) *s3.Client {
+		return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+			if endpoint != "" {
+				o.BaseEndpoint = aws.String(endpoint)
+			}
+			o.UsePathStyle = cfg.ForcePathStyle
+		})
+	}
 
-	return &S3Storage{client: client, bucket: cfg.Bucket}, nil
+	s := &S3Storage{client: newClient(cfg.Endpoint), bucket: cfg.Bucket}
+	if cfg.PublicEndpoint != "" && cfg.PublicEndpoint != cfg.Endpoint {
+		s.publicClient = newClient(cfg.PublicEndpoint)
+	}
+	return s, nil
+}
+
+// presignClient returns the client used for pre-signed URL generation. It
+// falls back to the main client when PublicEndpoint is unset.
+func (s *S3Storage) presignClient() *s3.Client {
+	if s.publicClient != nil {
+		return s.publicClient
+	}
+	return s.client
 }
 
 func (s *S3Storage) Put(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error {
@@ -167,7 +191,7 @@ func (s *S3Storage) Copy(ctx context.Context, srcKey, dstKey string) error {
 }
 
 func (s *S3Storage) SignURL(ctx context.Context, key string, expire time.Duration) (string, error) {
-	presigner := s3.NewPresignClient(s.client)
+	presigner := s3.NewPresignClient(s.presignClient())
 	req, err := presigner.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -179,7 +203,7 @@ func (s *S3Storage) SignURL(ctx context.Context, key string, expire time.Duratio
 }
 
 func (s *S3Storage) SignPutURL(ctx context.Context, key string, contentType string, expire time.Duration) (string, error) {
-	presigner := s3.NewPresignClient(s.client)
+	presigner := s3.NewPresignClient(s.presignClient())
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -195,7 +219,7 @@ func (s *S3Storage) SignPutURL(ctx context.Context, key string, contentType stri
 }
 
 func (s *S3Storage) WithBucket(bucket string) Storage {
-	return &S3Storage{client: s.client, bucket: bucket}
+	return &S3Storage{client: s.client, publicClient: s.publicClient, bucket: bucket}
 }
 
 func (s *S3Storage) Ping(ctx context.Context) error {
