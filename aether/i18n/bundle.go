@@ -68,24 +68,46 @@ func (b *Bundle) T(lang language.Tag, key string, args ...any) string {
 
 // Translate looks up a message by an already-matched language tag.
 // Falls back to the default language, then to the key itself.
+//
+// When you need to distinguish a real translation from the key-echo
+// fallback (e.g. to log missing translations), use Lookup instead.
 func (b *Bundle) Translate(lang language.Tag, key string, args ...any) string {
+	msg, _ := b.Lookup(lang, key)
+	return applyArgs(msg, args)
+}
+
+// Lookup looks up a message by an already-matched language tag and reports
+// whether the key was found in any registered locale (including the
+// default-language fallback).
+//
+// When found is false, msg is the key itself — callers that want
+// key-echo behaviour can use it verbatim, while callers that want to
+// alert on missing translations get an unambiguous signal.
+//
+// No formatting is applied; callers who want fmt.Sprintf behaviour should
+// pass the returned message through their own formatter, or use Translate.
+func (b *Bundle) Lookup(lang language.Tag, key string) (msg string, found bool) {
 	if msgs, ok := b.messages[lang]; ok {
-		if msg, ok := msgs[key]; ok {
-			return applyArgs(msg, args)
+		if m, ok := msgs[key]; ok {
+			return m, true
 		}
 	}
-
-	// Fallback to default language.
 	if lang != b.defaultLang {
 		if msgs, ok := b.messages[b.defaultLang]; ok {
-			if msg, ok := msgs[key]; ok {
-				return applyArgs(msg, args)
+			if m, ok := msgs[key]; ok {
+				return m, true
 			}
 		}
 	}
+	return key, false
+}
 
-	// Key itself as last resort.
-	return applyArgs(key, args)
+// TLookup is the matching variant of Lookup: it first resolves lang to the
+// best supported language, then looks up the key. Use this when lang
+// hasn't been pre-matched (e.g. a raw Accept-Language header value).
+func (b *Bundle) TLookup(lang language.Tag, key string) (msg string, found bool) {
+	matched, _, _ := b.matcher.Match(lang)
+	return b.Lookup(matched, key)
 }
 
 func applyArgs(msg string, args []any) string {
