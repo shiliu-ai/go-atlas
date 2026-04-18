@@ -7,25 +7,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// registerHealthRoutes adds /healthz, /livez, and /readyz endpoints.
-//
-// Routes are registered twice when the service has a non-empty Name:
-//   - at the engine root ("/healthz", "/livez", "/readyz") — reached by
-//     Kubernetes probes hitting the pod directly.
-//   - under the service base group ("/{name}/healthz", …) — reached by an
-//     ingress / API gateway that routes paths by service prefix and would
-//     otherwise strip root-level paths.
-//
-// When Name is empty the base group resolves to "/", so only the root
-// registration happens (registering twice would panic in gin).
+// registerHealthRoutes adds /healthz, /livez, and /readyz under the
+// service base group. When server.Name is empty the routes sit at the
+// engine root; when set (e.g. "account") they sit at "/account/…", which
+// lines up with path-prefix ingresses/gateways that forward "/account/*"
+// to this service. Point k8s probes at the same path the service actually
+// serves — probes hit pod:port directly, so the prefixed path works the
+// same as root.
 func (a *Atlas) registerHealthRoutes() {
-	a.srv.engine.GET("/healthz", a.healthzHandler)
-	a.srv.engine.GET("/livez", a.livezHandler)
-	a.srv.engine.GET("/readyz", a.readyzHandler)
-
-	if a.srv.cfg.Name == "" || a.srv.cfg.Name == "/" {
-		return
-	}
 	g := a.srv.group()
 	g.GET("/healthz", a.healthzHandler)
 	g.GET("/livez", a.livezHandler)

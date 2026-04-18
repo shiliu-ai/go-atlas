@@ -338,12 +338,12 @@ func TestHealthEndpointsNoPillars(t *testing.T) {
 	}
 }
 
-// TestHealthEndpointsServicePrefixed verifies that services with a non-empty
-// server.Name get their health routes registered at both the engine root and
-// under the service base group, so they are reachable behind a path-prefix
-// gateway. The base path comes from the "server.name" config key, which is
-// what each service sets in its config.yaml to align with the gateway rule
-// (e.g. account's config.yaml has `server: { name: "account" }`).
+// TestHealthEndpointsServicePrefixed verifies that when server.Name is set,
+// health routes live under the service base group only — aligned with the
+// gateway's path-prefix rule (e.g. account's config.yaml has
+// `server: { name: "account" }` and ingress routes "/account/*" to it).
+// Root paths must 404 so there is a single canonical path per service and
+// no risk of middleware-chain divergence between two registrations.
 func TestHealthEndpointsServicePrefixed(t *testing.T) {
 	dir := t.TempDir()
 	content := "server:\n  port: 0\n  name: \"account\"\nlog:\n  level: info\n"
@@ -356,13 +356,7 @@ func TestHealthEndpointsServicePrefixed(t *testing.T) {
 		pillarOpt(&healthPillar{name: "db", healthy: true}),
 	)
 
-	paths := []string{
-		// root — k8s probe style
-		"/healthz", "/livez", "/readyz",
-		// service-prefixed — gateway style
-		"/account/healthz", "/account/livez", "/account/readyz",
-	}
-	for _, path := range paths {
+	for _, path := range []string{"/account/healthz", "/account/livez", "/account/readyz"} {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", path, nil)
 		a.Engine().ServeHTTP(w, req)
@@ -376,6 +370,15 @@ func TestHealthEndpointsServicePrefixed(t *testing.T) {
 		}
 		if body["status"] != "healthy" {
 			t.Fatalf("%s: status = %v, want healthy", path, body["status"])
+		}
+	}
+
+	for _, path := range []string{"/healthz", "/livez", "/readyz"} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		a.Engine().ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s: want 404 (routes are prefix-only when Name is set), got %d", path, w.Code)
 		}
 	}
 }
