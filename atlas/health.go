@@ -8,10 +8,28 @@ import (
 )
 
 // registerHealthRoutes adds /healthz, /livez, and /readyz endpoints.
+//
+// Routes are registered twice when the service has a non-empty Name:
+//   - at the engine root ("/healthz", "/livez", "/readyz") — reached by
+//     Kubernetes probes hitting the pod directly.
+//   - under the service base group ("/{name}/healthz", …) — reached by an
+//     ingress / API gateway that routes paths by service prefix and would
+//     otherwise strip root-level paths.
+//
+// When Name is empty the base group resolves to "/", so only the root
+// registration happens (registering twice would panic in gin).
 func (a *Atlas) registerHealthRoutes() {
 	a.srv.engine.GET("/healthz", a.healthzHandler)
 	a.srv.engine.GET("/livez", a.livezHandler)
 	a.srv.engine.GET("/readyz", a.readyzHandler)
+
+	if a.srv.cfg.Name == "" || a.srv.cfg.Name == "/" {
+		return
+	}
+	g := a.srv.group()
+	g.GET("/healthz", a.healthzHandler)
+	g.GET("/livez", a.livezHandler)
+	g.GET("/readyz", a.readyzHandler)
 }
 
 // pillarStatus holds the health status and latency for a single pillar.

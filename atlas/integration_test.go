@@ -338,6 +338,48 @@ func TestHealthEndpointsNoPillars(t *testing.T) {
 	}
 }
 
+// TestHealthEndpointsServicePrefixed verifies that services with a non-empty
+// server.Name get their health routes registered at both the engine root and
+// under the service base group, so they are reachable behind a path-prefix
+// gateway. The base path comes from the "server.name" config key, which is
+// what each service sets in its config.yaml to align with the gateway rule
+// (e.g. account's config.yaml has `server: { name: "account" }`).
+func TestHealthEndpointsServicePrefixed(t *testing.T) {
+	dir := t.TempDir()
+	content := "server:\n  port: 0\n  name: \"account\"\nlog:\n  level: info\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := atlas.New("account",
+		atlas.WithConfigPaths(dir),
+		pillarOpt(&healthPillar{name: "db", healthy: true}),
+	)
+
+	paths := []string{
+		// root — k8s probe style
+		"/healthz", "/livez", "/readyz",
+		// service-prefixed — gateway style
+		"/account/healthz", "/account/livez", "/account/readyz",
+	}
+	for _, path := range paths {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", path, nil)
+		a.Engine().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: want 200, got %d (body: %s)", path, w.Code, w.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: body not JSON: %v", path, err)
+		}
+		if body["status"] != "healthy" {
+			t.Fatalf("%s: status = %v, want healthy", path, body["status"])
+		}
+	}
+}
+
 func TestPillarMiddlewareProvider(t *testing.T) {
 	dir := writeConfig(t, "")
 
