@@ -6,7 +6,17 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	aerrors "github.com/shiliu-ai/go-atlas/aether/errors"
 )
+
+// errInvalidToken is the canonical message for all token validation
+// failures (expired / bad signature / malformed / not-yet-valid /
+// wrong claims shape). Returned as aerrors.Wrap(CodeUnauthorized, ...)
+// so response.Err maps it to HTTP 401. The underlying jwt.Err* sentinel
+// is preserved in the cause chain, so callers can still do
+// errors.Is(err, jwt.ErrTokenExpired) to differentiate.
+const errInvalidToken = "invalid or expired token"
 
 // Config holds JWT configuration.
 type Config struct {
@@ -91,17 +101,17 @@ func (j *JWT) Parse(tokenStr string) (*Claims, error) {
 		errors.Is(err, jwt.ErrTokenNotValidYet) ||
 		errors.Is(err, jwt.ErrTokenSignatureInvalid) ||
 		errors.Is(err, jwt.ErrTokenUsedBeforeIssued) {
-		return nil, fmt.Errorf("auth: parse token: %w", err)
+		return nil, aerrors.Wrap(aerrors.CodeUnauthorized, errInvalidToken, err)
 	}
 
 	// Fallback: parse as MapClaims (skip exp validation for legacy tokens).
 	mapToken, mapErr := jwt.Parse(tokenStr, keyFunc, jwt.WithoutClaimsValidation())
 	if mapErr != nil {
-		return nil, fmt.Errorf("auth: parse token: %w", mapErr)
+		return nil, aerrors.Wrap(aerrors.CodeUnauthorized, errInvalidToken, mapErr)
 	}
 	mc, ok := mapToken.Claims.(jwt.MapClaims)
 	if !ok || !mapToken.Valid {
-		return nil, fmt.Errorf("auth: invalid token claims")
+		return nil, aerrors.New(aerrors.CodeUnauthorized, errInvalidToken)
 	}
 
 	claims := &Claims{}
@@ -118,7 +128,7 @@ func (j *JWT) Parse(tokenStr string) (*Claims, error) {
 	if exp, ok := mc["expire"].(float64); ok {
 		expTime := time.UnixMilli(int64(exp))
 		if time.Now().After(expTime) {
-			return nil, fmt.Errorf("auth: parse token: token is expired")
+			return nil, aerrors.Wrap(aerrors.CodeUnauthorized, errInvalidToken, jwt.ErrTokenExpired)
 		}
 		claims.ExpiresAt = jwt.NewNumericDate(expTime)
 	}
@@ -139,10 +149,12 @@ func (j *JWT) Parse(tokenStr string) (*Claims, error) {
 }
 
 // Refresh takes a valid refresh token and returns a new token pair.
+// Parse errors are already typed as aerrors.CodeUnauthorized (HTTP 401);
+// returning them verbatim lets response.Err map them correctly.
 func (j *JWT) Refresh(refreshToken string) (*TokenPair, error) {
 	claims, err := j.Parse(refreshToken)
 	if err != nil {
-		return nil, fmt.Errorf("auth: invalid refresh token: %w", err)
+		return nil, err
 	}
 	return j.GeneratePair(claims.UserID, claims.Metadata)
 }

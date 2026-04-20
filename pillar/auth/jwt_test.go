@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	aerrors "github.com/shiliu-ai/go-atlas/aether/errors"
 )
 
 func newTestJWT() *JWT {
@@ -102,6 +105,16 @@ func TestParse(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
 				}
+				// Parse errors must be aerrors.*Error with CodeUnauthorized
+				// so response.Err maps them to HTTP 401 instead of falling
+				// into the unhandled-error (500) branch.
+				var ae *aerrors.Error
+				if !errors.As(err, &ae) {
+					t.Fatalf("Parse error is not *aerrors.Error: %T (%v)", err, err)
+				}
+				if ae.Code() != aerrors.CodeUnauthorized {
+					t.Fatalf("Parse error code = %d, want %d", ae.Code(), aerrors.CodeUnauthorized)
+				}
 				return
 			}
 			if err != nil {
@@ -111,5 +124,43 @@ func TestParse(t *testing.T) {
 				t.Fatalf("uid = %q, want %q", claims.UserID, tc.wantUID)
 			}
 		})
+	}
+}
+
+// TestParse_PreservesJWTSentinelInChain verifies that callers who want
+// to differentiate "expired" from "bad signature" can still do so via
+// errors.Is against the jwt/v5 sentinels — the atlas wrap preserves
+// the cause chain.
+func TestParse_PreservesJWTSentinelInChain(t *testing.T) {
+	j := newTestJWT()
+	other := initJWT(Config{Secret: "different-secret"})
+
+	expired := signWith(t, j, Claims{
+		UserID: "u1",
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-2 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour)),
+		},
+	})
+	_, err := j.Parse(expired)
+	if err == nil {
+		t.Fatalf("expected error for expired token")
+	}
+	if !errors.Is(err, jwt.ErrTokenExpired) {
+		t.Fatalf("errors.Is(err, jwt.ErrTokenExpired) = false; chain lost")
+	}
+
+	badSig := signWith(t, other, Claims{
+		UserID: "u1",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	_, err = j.Parse(badSig)
+	if err == nil {
+		t.Fatalf("expected error for bad signature")
+	}
+	if !errors.Is(err, jwt.ErrTokenSignatureInvalid) {
+		t.Fatalf("errors.Is(err, jwt.ErrTokenSignatureInvalid) = false; chain lost")
 	}
 }

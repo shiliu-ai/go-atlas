@@ -24,8 +24,9 @@ func (j *JWT) Middleware() gin.HandlerFunc {
 
 		claims, err := j.Parse(tokenStr)
 		if err != nil {
-			response.Fail(c, errors.CodeUnauthorized, "invalid or expired token")
-			c.Abort()
+			// Parse returns an aerrors.CodeUnauthorized error already;
+			// forward it so the HTTP 401 status + message propagate consistently.
+			response.AbortErr(c, err)
 			return
 		}
 
