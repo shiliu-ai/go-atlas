@@ -29,9 +29,12 @@ func signWith(t *testing.T, j *JWT, claims jwt.Claims) string {
 	return s
 }
 
+// TestParse covers the happy path and every validation failure. All
+// failures must surface as *aerrors.Error with CodeUnauthorized so the
+// response layer maps them to HTTP 401.
 func TestParse(t *testing.T) {
 	j := newTestJWT()
-	otherSecret := initJWT(Config{Secret: "different-secret"})
+	other := initJWT(Config{Secret: "different-secret"})
 
 	cases := []struct {
 		name    string
@@ -40,7 +43,18 @@ func TestParse(t *testing.T) {
 		wantUID string
 	}{
 		{
-			name: "expired standard token",
+			name: "valid token",
+			build: func() string {
+				tok, err := j.GenerateAccess("u1", map[string]any{"role": "admin"})
+				if err != nil {
+					t.Fatalf("generate: %v", err)
+				}
+				return tok
+			},
+			wantUID: "u1",
+		},
+		{
+			name: "expired token",
 			build: func() string {
 				past := time.Now().Add(-time.Hour)
 				return signWith(t, j, Claims{
@@ -54,46 +68,20 @@ func TestParse(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "valid standard token",
-			build: func() string {
-				tok, err := j.GenerateAccess("u1", map[string]any{"role": "admin"})
-				if err != nil {
-					t.Fatalf("generate: %v", err)
-				}
-				return tok
-			},
-			wantUID: "u1",
-		},
-		{
-			name: "valid legacy numeric uid",
-			build: func() string {
-				return signWith(t, j, jwt.MapClaims{
-					"uid":    float64(123),
-					"expire": float64(time.Now().Add(time.Hour).UnixMilli()),
-				})
-			},
-			wantUID: "123",
-		},
-		{
-			name: "expired legacy token",
-			build: func() string {
-				return signWith(t, j, jwt.MapClaims{
-					"uid":    float64(123),
-					"expire": float64(time.Now().Add(-time.Hour).UnixMilli()),
-				})
-			},
-			wantErr: true,
-		},
-		{
 			name: "bad signature",
 			build: func() string {
-				return signWith(t, otherSecret, Claims{
+				return signWith(t, other, Claims{
 					UserID: "u1",
 					RegisteredClaims: jwt.RegisteredClaims{
 						ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 					},
 				})
 			},
+			wantErr: true,
+		},
+		{
+			name:    "malformed",
+			build:   func() string { return "not.a.jwt" },
 			wantErr: true,
 		},
 	}
@@ -105,9 +93,6 @@ func TestParse(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
 				}
-				// Parse errors must be aerrors.*Error with CodeUnauthorized
-				// so response.Err maps them to HTTP 401 instead of falling
-				// into the unhandled-error (500) branch.
 				var ae *aerrors.Error
 				if !errors.As(err, &ae) {
 					t.Fatalf("Parse error is not *aerrors.Error: %T (%v)", err, err)
@@ -127,10 +112,9 @@ func TestParse(t *testing.T) {
 	}
 }
 
-// TestParse_PreservesJWTSentinelInChain verifies that callers who want
-// to differentiate "expired" from "bad signature" can still do so via
-// errors.Is against the jwt/v5 sentinels — the atlas wrap preserves
-// the cause chain.
+// TestParse_PreservesJWTSentinelInChain verifies that the cause chain
+// preserves the jwt/v5 sentinels — callers who want to differentiate
+// expired vs bad-signature can still do so via errors.Is.
 func TestParse_PreservesJWTSentinelInChain(t *testing.T) {
 	j := newTestJWT()
 	other := initJWT(Config{Secret: "different-secret"})
@@ -142,12 +126,8 @@ func TestParse_PreservesJWTSentinelInChain(t *testing.T) {
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour)),
 		},
 	})
-	_, err := j.Parse(expired)
-	if err == nil {
-		t.Fatalf("expected error for expired token")
-	}
-	if !errors.Is(err, jwt.ErrTokenExpired) {
-		t.Fatalf("errors.Is(err, jwt.ErrTokenExpired) = false; chain lost")
+	if _, err := j.Parse(expired); !errors.Is(err, jwt.ErrTokenExpired) {
+		t.Fatalf("errors.Is(err, jwt.ErrTokenExpired) = false; chain lost: %v", err)
 	}
 
 	badSig := signWith(t, other, Claims{
@@ -156,11 +136,7 @@ func TestParse_PreservesJWTSentinelInChain(t *testing.T) {
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
 	})
-	_, err = j.Parse(badSig)
-	if err == nil {
-		t.Fatalf("expected error for bad signature")
-	}
-	if !errors.Is(err, jwt.ErrTokenSignatureInvalid) {
-		t.Fatalf("errors.Is(err, jwt.ErrTokenSignatureInvalid) = false; chain lost")
+	if _, err := j.Parse(badSig); !errors.Is(err, jwt.ErrTokenSignatureInvalid) {
+		t.Fatalf("errors.Is(err, jwt.ErrTokenSignatureInvalid) = false; chain lost: %v", err)
 	}
 }

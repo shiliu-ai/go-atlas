@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shiliu-ai/go-atlas/aether/errors"
 	"github.com/shiliu-ai/go-atlas/aether/response"
 )
 
@@ -17,15 +16,12 @@ func (j *JWT) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := extractToken(c, j.cfg.HeaderName)
 		if tokenStr == "" {
-			response.Fail(c, errors.CodeUnauthorized, "missing authorization token")
-			c.Abort()
+			response.AbortErr(c, ErrTokenMissing)
 			return
 		}
 
 		claims, err := j.Parse(tokenStr)
 		if err != nil {
-			// Parse returns an aerrors.CodeUnauthorized error already;
-			// forward it so the HTTP 401 status + message propagate consistently.
 			response.AbortErr(c, err)
 			return
 		}

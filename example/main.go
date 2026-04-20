@@ -99,9 +99,14 @@ func main() {
 			if !validate.BindJSON(c, &req) {
 				return
 			}
-			pair, err := jwt.Refresh(req.RefreshToken)
+			claims, err := jwt.Parse(req.RefreshToken)
 			if err != nil {
-				response.Fail(c, errors.CodeUnauthorized, "invalid refresh token")
+				response.AbortErr(c, err)
+				return
+			}
+			pair, err := jwt.GeneratePair(claims.UserID, claims.Metadata)
+			if err != nil {
+				response.AbortErr(c, err)
 				return
 			}
 			response.OK(c, pair)
