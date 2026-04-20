@@ -76,17 +76,22 @@ func (j *JWT) GenerateAccess(userID string, metadata map[string]any) (string, er
 }
 
 // Parse validates the token string and returns the claims. All validation
-// failures (expired, bad signature, malformed, wrong claim shape) are
-// returned as aerrors.CodeUnauthorized so aether/response maps them to
-// HTTP 401. The underlying jwt/v5 sentinel is preserved via errors.Is —
-// e.g. errors.Is(err, jwt.ErrTokenExpired) still works.
+// failures (expired, bad signature, malformed, missing exp, wrong claim
+// shape) are returned as aerrors.CodeUnauthorized so aether/response maps
+// them to HTTP 401. The underlying jwt/v5 sentinel is preserved via
+// errors.Is — e.g. errors.Is(err, jwt.ErrTokenExpired) still works.
+//
+// WithExpirationRequired enforces that the exp claim is present. This
+// is load-bearing: it rejects any token that predates the standard
+// claim shape (e.g. legacy {"uid","expire"} tokens from before v0.4.0),
+// forcing those clients to re-authenticate and obtain a current token.
 func (j *JWT) Parse(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
 		if t.Method.Alg() != j.method.Alg() {
 			return nil, jwt.ErrTokenSignatureInvalid
 		}
 		return []byte(j.cfg.Secret), nil
-	})
+	}, jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, aerrors.Wrap(aerrors.CodeUnauthorized, err.Error(), err)
 	}

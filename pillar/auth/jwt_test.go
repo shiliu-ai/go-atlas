@@ -84,6 +84,17 @@ func TestParse(t *testing.T) {
 			build:   func() string { return "not.a.jwt" },
 			wantErr: true,
 		},
+		{
+			// Any token shape without a standard "exp" claim must be rejected.
+			// This covers legacy {"uid","expire"} tokens that predate the
+			// structured Claims format — WithExpirationRequired kicks them
+			// out so clients re-authenticate and get a current token.
+			name: "no exp claim (legacy / never-expiring)",
+			build: func() string {
+				return signWith(t, j, jwt.MapClaims{"uid": "u1"})
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range cases {
