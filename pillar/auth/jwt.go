@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -81,6 +82,16 @@ func (j *JWT) Parse(tokenStr string) (*Claims, error) {
 		if ok && token.Valid {
 			return claims, nil
 		}
+	}
+
+	// If the token was parsed but rejected by validation (expired, not-yet-valid,
+	// bad signature), don't fall through to the lenient legacy path — those
+	// failures are authoritative regardless of claim shape.
+	if errors.Is(err, jwt.ErrTokenExpired) ||
+		errors.Is(err, jwt.ErrTokenNotValidYet) ||
+		errors.Is(err, jwt.ErrTokenSignatureInvalid) ||
+		errors.Is(err, jwt.ErrTokenUsedBeforeIssued) {
+		return nil, fmt.Errorf("auth: parse token: %w", err)
 	}
 
 	// Fallback: parse as MapClaims (skip exp validation for legacy tokens).
