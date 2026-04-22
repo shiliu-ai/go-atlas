@@ -31,6 +31,13 @@ type MiddlewareProvider interface {
 	Middleware() []gin.HandlerFunc
 }
 
+// RouteProvider is implemented by Pillars that need to mount HTTP routes on
+// the service base group (for example the telemetry pillar exposing
+// /metrics). Called once after middleware is wired and before Run.
+type RouteProvider interface {
+	Routes(group *gin.RouterGroup)
+}
+
 // pillarRegistry holds registered Pillar instances and tracks their order.
 type pillarRegistry struct {
 	pillars     map[string]Pillar

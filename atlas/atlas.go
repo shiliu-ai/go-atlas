@@ -86,7 +86,7 @@ func New(name string, opts ...Option) *Atlas {
 	a.srv = newServer(a.coreCfg.Server)
 
 	// 4. Init Pillars (in registration order).
-	core := newCore(a.config, a.logger)
+	core := newCore(a.name, a.config, a.logger)
 	for _, p := range a.registry.Pillars() {
 		if err := p.Init(core); err != nil {
 			panic(fmt.Sprintf("atlas: init pillar %q: %v", p.Name(), err))
@@ -98,6 +98,14 @@ func New(name string, opts ...Option) *Atlas {
 
 	// 6. Register health routes.
 	a.registerHealthRoutes()
+
+	// 7. Let Pillars register additional routes (e.g. telemetry /metrics).
+	group := a.srv.group()
+	for _, p := range a.registry.Pillars() {
+		if rp, ok := p.(RouteProvider); ok {
+			rp.Routes(group)
+		}
+	}
 
 	return a
 }

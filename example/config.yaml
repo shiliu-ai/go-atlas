@@ -86,11 +86,30 @@ email:
   #     from: "verify@example.com"
   #     tls: true
 
-tracing:
-  service_name: "example-service"
-  endpoint: "localhost:4318"
-  sample_rate: 1.0
-  insecure: true
+telemetry:
+  enabled: false                # master switch — false installs NoOp providers
+  resource:
+    environment: "development"  # deployment.environment.name
+    # version: "1.2.3"          # service.version (usually injected via ldflags)
+  otlp:
+    enabled: true
+    endpoint: "localhost:4318"  # OTel Collector default for OTLP/HTTP
+    protocol: "http"            # http | grpc
+    insecure: true              # set false + provide TLS headers in prod
+    # headers:                  # optional auth headers
+    #   authorization: "Bearer ..."
+  prometheus:
+    enabled: true
+    path: "/metrics"            # mounted on the main gin engine
+  traces:
+    enabled: true
+    sample_rate: 1.0            # 0 = never sample; 1 = always sample
+  metrics:
+    enabled: true
+    runtime: true               # process.runtime.go.* (GC, heap, goroutines)
+    http: true                  # auto HTTP RED middleware
+    cardinality_limit: 2000     # per-instrument attribute-set cap
+    exemplars: true             # link histogram buckets back to trace_ids
 
 httpclient:
   timeout: 5s

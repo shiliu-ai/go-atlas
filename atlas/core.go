@@ -11,15 +11,21 @@ import (
 // It provides access to configuration and logging without exposing
 // the full Atlas instance.
 type Core struct {
-	config *viper.Viper
-	logger log.Logger
+	serviceName string
+	config      *viper.Viper
+	logger      log.Logger
 }
 
 // newCore creates a Core from a viper config and logger.
 // This is intended for internal use by Atlas.
-func newCore(config *viper.Viper, logger log.Logger) *Core {
-	return &Core{config: config, logger: logger}
+func newCore(serviceName string, config *viper.Viper, logger log.Logger) *Core {
+	return &Core{serviceName: serviceName, config: config, logger: logger}
 }
+
+// ServiceName returns the service name passed to atlas.New.
+// Pillars use this as the single source of truth for identifiers like
+// OTel's service.name Resource attribute.
+func (c *Core) ServiceName() string { return c.serviceName }
 
 // Unmarshal deserializes the config section at key into target.
 func (c *Core) Unmarshal(key string, target any) error {

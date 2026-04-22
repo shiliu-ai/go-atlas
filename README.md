@@ -6,7 +6,7 @@
 
 A refined Go framework for building production-grade backend services. Built on Gin, designed for teams who value clarity over ceremony.
 
-Atlas provides a cohesive set of building blocks — authentication, storage, caching, tracing, inter-service communication, and more — wired together through a mythology-inspired **four-domain architecture**: Aether (built-in essentials), Pillar (pluggable infrastructure), and Artifact (standalone utilities), with sensible defaults and zero boilerplate.
+Atlas provides a cohesive set of building blocks — authentication, storage, caching, telemetry, inter-service communication, and more — wired together through a mythology-inspired **four-domain architecture**: Aether (built-in essentials), Pillar (pluggable infrastructure), and Artifact (standalone utilities), with sensible defaults and zero boilerplate.
 
 ## Quick Start
 
@@ -72,7 +72,7 @@ pillar/             The columns — pluggable infrastructure (opt-in via Pillar(
   ├── serviceclient Typed inter-service RPC
   ├── sms           SMS sending (Tencent Cloud)
   ├── storage       Object storage (S3/COS/OSS/TOS)
-  └── tracing       OpenTelemetry distributed tracing
+  └── telemetry     OpenTelemetry tracing + metrics (unified Resource, OTLP + Prometheus)
 artifact/           Divine tools — standalone utilities (zero framework dependency)
   ├── crypto        Password hashing, AES-GCM encryption
   ├── id            UUID, NanoID, ShortID, NumericID, Snowflake
@@ -188,11 +188,27 @@ sms:
       sign: "YourAppName"
       region: "ap-guangzhou"
 
-tracing:
-  service_name: "my-service"
-  endpoint: "localhost:4318"
-  sample_rate: 1.0
-  insecure: true
+telemetry:
+  enabled: true
+  resource:
+    environment: "production"
+  otlp:
+    enabled: true
+    endpoint: "localhost:4318"
+    protocol: "http"
+    insecure: true
+  prometheus:
+    enabled: true
+    path: "/metrics"
+  traces:
+    enabled: true
+    sample_rate: 1.0
+  metrics:
+    enabled: true
+    runtime: true
+    http: true
+    cardinality_limit: 2000
+    exemplars: true
 
 httpclient:
   timeout: 5s
@@ -516,7 +532,7 @@ Atlas registers these middleware by default:
 | **CORS** | Configurable cross-origin resource sharing |
 | **Rate Limit** | Sliding window rate limiter (if configured) |
 
-Pillars that implement `MiddlewareProvider` (e.g. tracing, serviceclient) automatically inject their middleware between core defaults and user middleware.
+Pillars that implement `MiddlewareProvider` (e.g. telemetry, serviceclient) automatically inject their middleware between core defaults and user middleware.
 
 Logging is context-aware — trace IDs and request IDs flow through automatically.
 
@@ -524,21 +540,45 @@ Disable all defaults with `WithoutDefaultMiddleware()`, or add custom middleware
 
 ## Observability
 
-Register the tracing Pillar for OpenTelemetry distributed tracing:
+Register the telemetry Pillar for unified OpenTelemetry tracing and metrics:
 
 ```go
-a := atlas.New("my-service", tracing.Pillar())
+a := atlas.New("my-service", telemetry.Pillar())
+
+t := telemetry.Of(a)
+tracer := t.Tracer("billing")
+meter  := t.Meter("billing")
 ```
+
+One Pillar, one shared `Resource`, one OTLP connection. Traces and metrics are emitted in lockstep; histogram buckets carry the active `trace_id` as exemplars so you can jump from a P99 spike straight to the slow request.
 
 ```yaml
-tracing:
-  service_name: "my-service"
-  endpoint: "localhost:4318"
-  sample_rate: 1.0
-  insecure: true
+telemetry:
+  enabled: true
+  resource:
+    environment: "production"
+  otlp:
+    enabled: true
+    endpoint: "localhost:4318"
+    protocol: "http"
+    insecure: true
+  prometheus:
+    enabled: true                 # exposes /metrics on the service base path
+    path: "/metrics"
+  traces:
+    enabled: true
+    sample_rate: 1.0
+  metrics:
+    enabled: true
+    runtime: true                 # Go runtime: GC, goroutines, heap
+    http: true                    # auto HTTP RED (semconv-compliant)
+    cardinality_limit: 2000       # hard cap on attribute combinations
+    exemplars: true               # metric → trace correlation
 ```
 
-Traces propagate across HTTP client calls and inter-service communication. Every response includes a `trace_id` for end-to-end debugging.
+HTTP RED metrics follow OTel semconv (`http.server.request.duration`, `http.server.active_requests`) with `http.route` set from gin's matched template so labels stay bounded. Traces propagate across HTTP client calls and inter-service communication; every response includes a `trace_id` for end-to-end debugging.
+
+For extension points (custom Views, extra Resource attributes, shared Prometheus registry, opt-out of OTel globals) see [`pillar/telemetry/README.md`](pillar/telemetry/README.md).
 
 ## Example
 

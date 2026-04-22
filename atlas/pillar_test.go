@@ -145,7 +145,7 @@ func TestCoreUnmarshal(t *testing.T) {
 	v.Set("db.host", "localhost")
 	v.Set("db.port", 5432)
 
-	c := newCore(v, nil)
+	c := newCore("test", v, nil)
 
 	var cfg struct {
 		Host string `mapstructure:"host"`
@@ -161,7 +161,7 @@ func TestCoreUnmarshal(t *testing.T) {
 
 func TestCoreUnmarshalMissing(t *testing.T) {
 	v := viper.New()
-	c := newCore(v, nil)
+	c := newCore("test", v, nil)
 
 	var cfg struct{}
 	err := c.Unmarshal("nonexistent", &cfg)
@@ -176,7 +176,7 @@ func TestCoreUnmarshalMissing(t *testing.T) {
 func TestCoreLogger(t *testing.T) {
 	v := viper.New()
 	l := log.NewDefault(log.LevelInfo)
-	c := newCore(v, l)
+	c := newCore("test", v, l)
 
 	sub := c.Logger("mymod")
 	if sub == nil {

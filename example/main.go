@@ -30,6 +30,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/pillar/auth"
 	"github.com/shiliu-ai/go-atlas/pillar/httpclient"
 	"github.com/shiliu-ai/go-atlas/pillar/serviceclient"
+	"github.com/shiliu-ai/go-atlas/pillar/telemetry"
 )
 
 func main() {
@@ -38,6 +39,7 @@ func main() {
 	// Aether (errors, response, log) and Artifact (id, crypto) need no registration.
 	a := atlas.New("example-service",
 		atlas.WithConfigPaths(".", "./example"),
+		telemetry.Pillar(),     // unified OTel: tracing + metrics + /metrics
 		auth.Pillar(),          // JWT authentication
 		httpclient.Pillar(),    // production-ready HTTP client
 		serviceclient.Pillar(), // typed inter-service RPC

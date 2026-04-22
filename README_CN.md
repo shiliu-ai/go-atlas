@@ -6,7 +6,7 @@
 
 Atlas 是一套精练的 Go 后端服务框架，构建于 Gin 之上，为追求简洁与效率的团队而设计。
 
-它将认证、存储、缓存、链路追踪、服务间通信等后端常用基础设施整合为一组内聚的构建模块，采用灵感源自希腊神话的**四域架构**——埃忒耳/以太（Aether）、立柱（Pillar）、神器（Artifact）各司其职，开箱即用，零样板代码。
+它将认证、存储、缓存、可观测性（tracing + metrics）、服务间通信等后端常用基础设施整合为一组内聚的构建模块，采用灵感源自希腊神话的**四域架构**——埃忒耳/以太（Aether）、立柱（Pillar）、神器（Artifact）各司其职，开箱即用，零样板代码。
 
 ## 快速开始
 
@@ -72,7 +72,7 @@ pillar/             立柱 — 可插拔基础设施（通过 Pillar() 按需注
   ├── serviceclient 类型化服务间 RPC
   ├── sms           短信发送（腾讯云）
   ├── storage       对象存储（S3/COS/OSS/TOS）
-  └── tracing       OpenTelemetry 分布式链路追踪
+  └── telemetry     OpenTelemetry 链路追踪 + 指标（共享 Resource，OTLP + Prometheus）
 artifact/           神器 — 独立工具集（零框架依赖）
   ├── crypto        密码哈希、AES-GCM 加密
   ├── id            UUID、NanoID、ShortID、NumericID、Snowflake
@@ -188,11 +188,27 @@ sms:
       sign: "YourAppName"
       region: "ap-guangzhou"
 
-tracing:
-  service_name: "my-service"
-  endpoint: "localhost:4318"
-  sample_rate: 1.0
-  insecure: true
+telemetry:
+  enabled: true
+  resource:
+    environment: "production"
+  otlp:
+    enabled: true
+    endpoint: "localhost:4318"
+    protocol: "http"            # http | grpc
+    insecure: true
+  prometheus:
+    enabled: true               # 在服务基础路径下暴露 /metrics
+    path: "/metrics"
+  traces:
+    enabled: true
+    sample_rate: 1.0
+  metrics:
+    enabled: true
+    runtime: true               # Go runtime 指标：GC、goroutine、堆
+    http: true                  # 自动 HTTP RED（符合 semconv）
+    cardinality_limit: 2000     # 属性组合数硬上限
+    exemplars: true             # histogram 绑定 trace_id，一键从指标跳到 trace
 
 httpclient:
   timeout: 5s
@@ -516,7 +532,7 @@ Atlas 默认注册以下中间件：
 | **CORS** | 可配置的跨域资源共享 |
 | **Rate Limit** | 滑动窗口限流器（需配置） |
 
-实现 `MiddlewareProvider` 接口的 Pillar（如 tracing、serviceclient）会自动注入中间件，位于核心默认中间件与用户自定义中间件之间。
+实现 `MiddlewareProvider` 接口的 Pillar（如 telemetry、serviceclient）会自动注入中间件，位于核心默认中间件与用户自定义中间件之间。
 
 日志系统上下文感知——Trace ID 和 Request ID 自动贯穿整条链路。
 
@@ -524,21 +540,45 @@ Atlas 默认注册以下中间件：
 
 ## 可观测性
 
-注册 tracing Pillar 即可启用 OpenTelemetry 分布式链路追踪：
+注册 telemetry Pillar 即可启用统一的 OpenTelemetry 链路追踪与指标：
 
 ```go
-a := atlas.New("my-service", tracing.Pillar())
+a := atlas.New("my-service", telemetry.Pillar())
+
+t := telemetry.Of(a)
+tracer := t.Tracer("billing")
+meter  := t.Meter("billing")
 ```
+
+一个 Pillar、一份 `Resource`、一条 OTLP 连接。Tracing 与 metrics 同步发射，histogram bucket 携带当前活跃 span 的 `trace_id`（exemplar），在 Grafana 上可以从 P99 毛刺一键跳到具体的慢请求 trace。
 
 ```yaml
-tracing:
-  service_name: "my-service"
-  endpoint: "localhost:4318"
-  sample_rate: 1.0
-  insecure: true
+telemetry:
+  enabled: true
+  resource:
+    environment: "production"
+  otlp:
+    enabled: true
+    endpoint: "localhost:4318"
+    protocol: "http"
+    insecure: true
+  prometheus:
+    enabled: true
+    path: "/metrics"
+  traces:
+    enabled: true
+    sample_rate: 1.0
+  metrics:
+    enabled: true
+    runtime: true
+    http: true
+    cardinality_limit: 2000
+    exemplars: true
 ```
 
-链路信息在 HTTP 客户端调用和服务间通信中自动传播，每个响应都携带 `trace_id` 用于端到端排查。
+HTTP RED 指标遵循 OTel semconv 命名（`http.server.request.duration`、`http.server.active_requests`），`http.route` 标签取自 gin 的模板路径，天然低基数。链路信息在 HTTP 客户端调用和服务间通信中自动传播，每个响应都携带 `trace_id` 用于端到端排查。
+
+扩展点（自定义 View、额外 Resource 属性、共享 Prometheus registry、可选关闭 OTel 全局注册）详见 [`pillar/telemetry/README.md`](pillar/telemetry/README.md)。
 
 ## 示例
 
