@@ -45,9 +45,12 @@ func (p *Provider) AuthCodeURL(state string, opts ...oauth2.AuthCodeOption) stri
 	return p.config.AuthCodeURL(state, opts...)
 }
 
-// Exchange trades an authorization code for a token.
-func (p *Provider) Exchange(ctx context.Context, code string) (*oauth2.Token, error) {
-	token, err := p.config.Exchange(ctx, code)
+// Exchange trades an authorization code for a token. Pass
+// oauth2.SetAuthURLParam("redirect_uri", uri) when the caller used a
+// callback URL different from the configured RedirectURL — RFC 6749 §4.1.3
+// requires the redirect_uri sent here to match the one used in authorize.
+func (p *Provider) Exchange(ctx context.Context, code string, opts ...oauth2.AuthCodeOption) (*oauth2.Token, error) {
+	token, err := p.config.Exchange(ctx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: %s exchange: %w", p.name, err)
 	}
