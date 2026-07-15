@@ -24,6 +24,11 @@ type Config struct {
 	MaxLifetime  time.Duration `mapstructure:"max_lifetime"`
 	ShowSQL      bool          `mapstructure:"show_sql"`
 	LogLevel     string        `mapstructure:"log_level"`
+	// IgnoreRecordNotFoundError controls whether gorm.ErrRecordNotFound is logged
+	// at ERROR. It is a *bool so an absent config key (nil) defaults to true —
+	// record-not-found is normal First()+errors.Is control flow, not an error.
+	// Set it to false explicitly to restore GORM's default of logging it.
+	IgnoreRecordNotFoundError *bool `mapstructure:"ignore_record_not_found_error"`
 }
 
 // Manager manages multiple named database connections with lazy initialization.
@@ -121,7 +126,14 @@ func openDB(cfg Config, l log.Logger) (*gorm.DB, error) {
 	if l == nil {
 		l = log.Global()
 	}
-	gormCfg.Logger = newGormLogger(l, lvl, 200*time.Millisecond)
+	// Default to ignoring ErrRecordNotFound (nil == unset). record-not-found is
+	// normal control flow (First()+errors.Is), not a real error, and logging it
+	// at ERROR floods the error stream. Opt out by setting the key to false.
+	ignoreNotFound := true
+	if cfg.IgnoreRecordNotFoundError != nil {
+		ignoreNotFound = *cfg.IgnoreRecordNotFoundError
+	}
+	gormCfg.Logger = newGormLogger(l, lvl, 200*time.Millisecond, ignoreNotFound)
 
 	db, err := gorm.Open(dialector, gormCfg)
 	if err != nil {
