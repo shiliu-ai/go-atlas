@@ -54,27 +54,37 @@ return 0
 // redisAllocator claims a worker ID by scanning the ID space with SET NX and
 // keeps it via a TTL lease.
 type redisAllocator struct {
-	client    *redis.Client
-	keyPrefix string
-	ttl       time.Duration
-	token     string
-	key       string // set once acquired
+	client     *redis.Client
+	ownsClient bool // true when this allocator dialed the client and must close it
+	keyPrefix  string
+	ttl        time.Duration
+	token      string
+	key        string // set once acquired
 }
 
-func newRedisAllocator(cfg Config) (*redisAllocator, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-	if err := client.Ping(context.Background()).Err(); err != nil {
-		return nil, fmt.Errorf("snowflake: redis ping: %w", err)
+// newRedisAllocator builds a Redis-backed allocator. When client is nil it dials
+// its own from cfg (and owns/closes it); when a client is injected it reuses that
+// pool and leaves closing to the owner.
+func newRedisAllocator(cfg Config, client *redis.Client) (*redisAllocator, error) {
+	ownsClient := false
+	if client == nil {
+		client = redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+		if err := client.Ping(context.Background()).Err(); err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("snowflake: redis ping: %w", err)
+		}
+		ownsClient = true
 	}
 	return &redisAllocator{
-		client:    client,
-		keyPrefix: cfg.KeyPrefix,
-		ttl:       cfg.TTL,
-		token:     uuid.NewString(),
+		client:     client,
+		ownsClient: ownsClient,
+		keyPrefix:  cfg.KeyPrefix,
+		ttl:        cfg.TTL,
+		token:      uuid.NewString(),
 	}, nil
 }
 
@@ -115,4 +125,11 @@ func (r *redisAllocator) Release(ctx context.Context) error {
 	return nil
 }
 
-func (r *redisAllocator) Close() error { return r.client.Close() }
+// Close closes the underlying client only if this allocator dialed it; an
+// injected (shared) client is left for its owner to close.
+func (r *redisAllocator) Close() error {
+	if r.ownsClient {
+		return r.client.Close()
+	}
+	return nil
+}

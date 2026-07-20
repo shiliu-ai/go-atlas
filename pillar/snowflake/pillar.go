@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/shiliu-ai/go-atlas/aether/log"
 	"github.com/shiliu-ai/go-atlas/artifact/id"
 	"github.com/shiliu-ai/go-atlas/atlas"
@@ -27,6 +29,22 @@ func Of(a *atlas.Atlas) *Manager { return atlas.Use[*Manager](a) }
 // Option configures the snowflake Pillar.
 type Option func(*Manager)
 
+// WithAllocator injects a custom worker-ID Allocator, replacing the default
+// config-driven Redis allocation. Use it to back allocation with a different
+// coordinator (etcd, Consul, a database, ...) or a fake in tests. When set, a
+// Redis address or static worker_id is not required in config.
+func WithAllocator(a Allocator) Option {
+	return func(m *Manager) { m.allocator = a }
+}
+
+// WithRedisClient makes the default Redis allocator reuse an existing client
+// (e.g. the cache pillar's) instead of dialing its own, sharing the connection
+// pool. The injected client is not closed on Stop — its owner keeps that
+// responsibility. Ignored when WithAllocator is set.
+func WithRedisClient(client *redis.Client) Option {
+	return func(m *Manager) { m.injectedClient = client }
+}
+
 var (
 	_ atlas.Pillar        = (*Manager)(nil)
 	_ atlas.Starter       = (*Manager)(nil)
@@ -41,7 +59,7 @@ func (m *Manager) Init(core *atlas.Core) error {
 		return fmt.Errorf("snowflake: %w", err)
 	}
 	cfg = cfg.withDefaults()
-	if err := cfg.validate(); err != nil {
+	if err := cfg.validate(m.allocator != nil); err != nil {
 		return err
 	}
 
@@ -52,11 +70,18 @@ func (m *Manager) Init(core *atlas.Core) error {
 	m.failSafe = cfg.FailMode != "besteffort"
 	m.ttl, m.renew, m.safety = cfg.TTL, cfg.RenewInterval, cfg.SafetyMargin
 
-	if cfg.WorkerID != nil {
+	// An injected allocator (WithAllocator) wins; it is treated as lease-based so
+	// the renewer/watchdog run (a static-style allocator's Renew is a harmless
+	// no-op). Otherwise build from config: static worker_id or a Redis allocator
+	// that reuses an injected client (WithRedisClient) or dials its own.
+	switch {
+	case m.allocator != nil:
+		// use as-is
+	case cfg.WorkerID != nil:
 		m.static = true
 		m.allocator = &staticAllocator{workerID: *cfg.WorkerID}
-	} else {
-		alloc, err := newRedisAllocator(cfg)
+	default:
+		alloc, err := newRedisAllocator(cfg, m.injectedClient)
 		if err != nil {
 			return err
 		}

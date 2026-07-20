@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -66,9 +67,12 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-func (c Config) validate() error {
-	if c.WorkerID == nil && c.Redis.Addr == "" {
-		return fmt.Errorf("snowflake: redis.addr required for automatic worker id allocation (or set worker_id)")
+// validate checks the config. hasAllocator is true when a custom Allocator was
+// injected (WithAllocator), in which case a Redis address or static worker_id is
+// not required — the injected allocator supplies the backend.
+func (c Config) validate(hasAllocator bool) error {
+	if !hasAllocator && c.WorkerID == nil && c.Redis.Addr == "" {
+		return fmt.Errorf("snowflake: redis.addr required for automatic worker id allocation (or set worker_id, or inject an allocator)")
 	}
 	if c.WorkerID != nil && (*c.WorkerID < 0 || *c.WorkerID > maxWorkerID) {
 		return fmt.Errorf("snowflake: worker_id must be in [0, %d]", maxWorkerID)
@@ -120,9 +124,14 @@ func (m *Manager) recordEvent(event string) {
 
 // Manager is the snowflake Pillar.
 type Manager struct {
-	logger    log.Logger
+	logger log.Logger
+	// allocator may be pre-set via WithAllocator; otherwise it is built from
+	// config in Init.
 	allocator Allocator
-	gen       *Generator
+	// injectedClient is an optional shared Redis client (WithRedisClient) for the
+	// default Redis allocator, so it reuses an existing pool instead of dialing.
+	injectedClient *redis.Client
+	gen            *Generator
 
 	static   bool
 	failSafe bool

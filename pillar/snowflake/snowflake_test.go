@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -174,30 +175,80 @@ func TestManager_StartStop_ReleasesAndCloses(t *testing.T) {
 
 func TestConfig_Validate(t *testing.T) {
 	base := Config{TTL: 30 * time.Second, RenewInterval: 10 * time.Second, SafetyMargin: 5 * time.Second}
-	if err := base.validate(); err == nil {
+	if err := base.validate(false); err == nil {
 		t.Error("auto mode requires redis.addr")
+	}
+	// An injected allocator supplies the backend, so no redis.addr/worker_id needed.
+	if err := base.validate(true); err != nil {
+		t.Errorf("injected allocator should not require redis.addr: %v", err)
 	}
 	wid := int64(3)
 	static := base
 	static.WorkerID = &wid
-	if err := static.validate(); err != nil {
+	if err := static.validate(false); err != nil {
 		t.Errorf("static valid: %v", err)
 	}
 	bad := static
 	bad.TTL = 12 * time.Second
-	if err := bad.validate(); err == nil {
+	if err := bad.validate(false); err == nil {
 		t.Error("ttl must exceed renew+safety")
 	}
 	neg := static
 	neg.SafetyMargin = -time.Second
-	if err := neg.validate(); err == nil {
+	if err := neg.validate(false); err == nil {
 		t.Error("negative durations must be rejected")
 	}
 	oor := base
 	big := int64(2000)
 	oor.WorkerID = &big
-	if err := oor.validate(); err == nil {
+	if err := oor.validate(false); err == nil {
 		t.Error("worker_id out of [0,1023] must be rejected")
+	}
+}
+
+func TestOptions_InjectAllocatorAndClient(t *testing.T) {
+	// WithAllocator lets callers back allocation with any coordinator (or a fake)
+	// and makes the pillar usable without any Redis config.
+	fake := &reAllocator{renewOK: true}
+	m := &Manager{}
+	WithAllocator(fake)(m)
+	if m.allocator != Allocator(fake) {
+		t.Fatal("WithAllocator should set the injected allocator")
+	}
+	cfg := Config{TTL: 30 * time.Second, RenewInterval: 10 * time.Second, SafetyMargin: 5 * time.Second}.withDefaults()
+	if err := cfg.validate(m.allocator != nil); err != nil {
+		t.Fatalf("injected allocator should satisfy validation without redis.addr: %v", err)
+	}
+
+	// WithRedisClient stashes a shared client for the default Redis allocator.
+	m2 := &Manager{}
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	defer func() { _ = client.Close() }()
+	WithRedisClient(client)(m2)
+	if m2.injectedClient != client {
+		t.Fatal("WithRedisClient should set the injected client")
+	}
+}
+
+// TestRedisAllocator_InjectedClientNotClosed verifies an injected (shared) client
+// is left open on Close, while a self-dialed one would be owned.
+func TestRedisAllocator_InjectedClientNotClosed(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	defer func() { _ = client.Close() }()
+
+	alloc, err := newRedisAllocator(Config{KeyPrefix: "snowflake:worker:", TTL: 30 * time.Second}, client)
+	if err != nil {
+		t.Fatalf("newRedisAllocator with injected client: %v", err)
+	}
+	if alloc.ownsClient {
+		t.Fatal("injected client must not be owned by the allocator")
+	}
+	if err := alloc.Close(); err != nil {
+		t.Fatalf("Close on shared client should be a no-op: %v", err)
+	}
+	// The shared client is still usable (not closed) — Options() succeeds.
+	if alloc.client.Options().Addr != "127.0.0.1:6379" {
+		t.Fatal("shared client should remain open after allocator Close")
 	}
 }
 
@@ -219,7 +270,7 @@ func TestStaticAllocator(t *testing.T) {
 
 func TestNewRedisAllocator_Unreachable(t *testing.T) {
 	cfg := Config{Redis: RedisConfig{Addr: "127.0.0.1:1"}, TTL: 30 * time.Second, KeyPrefix: "snowflake:worker:"}
-	if _, err := newRedisAllocator(cfg); err == nil {
+	if _, err := newRedisAllocator(cfg, nil); err == nil {
 		t.Fatal("expected error for unreachable redis")
 	}
 }
