@@ -278,18 +278,21 @@ func TestHealthEndpoints(t *testing.T) {
 			wantBody:   "healthy",
 		},
 		{
-			name:       "readyz healthy",
+			// /readyz reflects lifecycle state only; New() leaves the instance
+			// in "starting" (not yet run), so 503 regardless of pillar health.
+			name:       "readyz starting (before Run)",
 			path:       "/readyz",
 			pillar:     &healthPillar{name: "db", healthy: true},
-			wantStatus: http.StatusOK,
-			wantBody:   "healthy",
+			wantStatus: http.StatusServiceUnavailable,
+			wantBody:   "starting",
 		},
 		{
-			name:       "readyz unhealthy",
+			// /readyz does not aggregate dependencies — dep health belongs to /healthz.
+			name:       "readyz starting (unhealthy dep ignored)",
 			path:       "/readyz",
 			pillar:     &healthPillar{name: "db", healthy: false},
 			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   "not ready",
+			wantBody:   "starting",
 		},
 	}
 
@@ -327,13 +330,25 @@ func TestHealthEndpointsNoPillars(t *testing.T) {
 		atlas.WithConfigPaths(dir),
 	)
 
-	for _, path := range []string{"/healthz", "/livez", "/readyz"} {
+	// /healthz and /livez return 200 even with no pillars.
+	for _, path := range []string{"/healthz", "/livez"} {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", path, nil)
 		a.Engine().ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s: want 200, got %d", path, w.Code)
+		}
+	}
+
+	// /readyz reflects lifecycle state: New() leaves instance in "starting",
+	// so it returns 503 until Run() is called.
+	{
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/readyz", nil)
+		a.Engine().ServeHTTP(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("/readyz: want 503 (starting state), got %d", w.Code)
 		}
 	}
 }
@@ -356,7 +371,8 @@ func TestHealthEndpointsServicePrefixed(t *testing.T) {
 		pillarOpt(&healthPillar{name: "db", healthy: true}),
 	)
 
-	for _, path := range []string{"/account/healthz", "/account/livez", "/account/readyz"} {
+	// /healthz and /livez always return 200/healthy.
+	for _, path := range []string{"/account/healthz", "/account/livez"} {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", path, nil)
 		a.Engine().ServeHTTP(w, req)
@@ -370,6 +386,24 @@ func TestHealthEndpointsServicePrefixed(t *testing.T) {
 		}
 		if body["status"] != "healthy" {
 			t.Fatalf("%s: status = %v, want healthy", path, body["status"])
+		}
+	}
+
+	// /readyz reflects lifecycle state: New() leaves instance in "starting",
+	// so it returns 503 until Run() is called.
+	{
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/account/readyz", nil)
+		a.Engine().ServeHTTP(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("/account/readyz: want 503 (starting state), got %d (body: %s)", w.Code, w.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("/account/readyz: body not JSON: %v", err)
+		}
+		if body["status"] != "starting" {
+			t.Fatalf("/account/readyz: status = %v, want starting", body["status"])
 		}
 	}
 

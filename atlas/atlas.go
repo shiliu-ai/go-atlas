@@ -3,6 +3,7 @@ package atlas
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -35,6 +36,10 @@ type Atlas struct {
 	// rateLimitStore holds a reference to the rate limiter store (if any)
 	// so its cleanup goroutine can be stopped during shutdown.
 	rateLimitStore *memStore
+
+	// readiness holds the lifecycle readiness state served by /readyz
+	// (see readiness.go). Zero value is readinessStarting.
+	readiness atomic.Int32
 }
 
 // New creates and initializes an Atlas instance.

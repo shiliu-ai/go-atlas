@@ -47,20 +47,17 @@ func (a *Atlas) livezHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 }
 
-// readyzHandler checks all HealthChecker Pillars to determine readiness.
+// readyzHandler reports whether this instance should receive traffic, based
+// solely on its lifecycle readiness state (starting/ready/draining). It does
+// NOT aggregate shared external dependencies — that is /healthz — so that a
+// blip in a shared dependency does not drain every replica at once.
 func (a *Atlas) readyzHandler(c *gin.Context) {
-	overall, pillars := a.checkHealth(c)
-	status := http.StatusOK
-	statusText := "healthy"
-	if overall != "healthy" {
-		status = http.StatusServiceUnavailable
-		statusText = "not ready"
+	state := a.readinessValue()
+	if state == readinessReady {
+		c.JSON(http.StatusOK, gin.H{"status": state.String()})
+		return
 	}
-	resp := gin.H{"status": statusText}
-	if len(pillars) > 0 {
-		resp["pillars"] = pillars
-	}
-	c.JSON(status, resp)
+	c.JSON(http.StatusServiceUnavailable, gin.H{"status": state.String()})
 }
 
 // checkHealth iterates registered Pillars and returns overall status plus

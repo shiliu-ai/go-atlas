@@ -39,15 +39,27 @@ func (a *Atlas) run(ctx context.Context) error {
 		}
 	}
 
-	// Start HTTP server in a goroutine.
+	// Bind the listener in the foreground so readiness flips to ready only
+	// after the socket is actually accepting connections.
+	ln, err := a.srv.listen()
+	if err != nil {
+		a.logger.Error(ctx, "http server listen failed", log.F("error", err))
+		return a.shutdown(context.Background())
+	}
+
+	// Serve requests in a goroutine.
 	go func() {
 		a.logger.Info(ctx, "http server starting",
 			log.F("port", a.srv.cfg.Port),
 		)
-		if err := a.srv.start(); err != nil {
+		if err := a.srv.serve(ln); err != nil {
 			errCh <- err
 		}
 	}()
+
+	// Listener is up and Starters launched: accept traffic.
+	a.setReadiness(readinessReady)
+	a.logger.Info(ctx, "atlas ready", log.F("name", a.name))
 
 	// Wait for signal or error.
 	quit := make(chan os.Signal, 1)
@@ -65,10 +77,15 @@ func (a *Atlas) run(ctx context.Context) error {
 	return a.shutdown(context.Background())
 }
 
-// shutdown performs graceful shutdown: stop server first, then Pillars
-// in reverse registration order, then clean up internal resources.
+// shutdown performs graceful shutdown: mark the instance draining (so load
+// balancers stop routing to it), stop the HTTP server, then Pillars in
+// reverse registration order, then clean up internal resources.
 func (a *Atlas) shutdown(ctx context.Context) error {
 	a.logger.Info(ctx, "atlas shutting down", log.F("name", a.name))
+
+	// Refuse new traffic first so load balancers drain this instance via
+	// /readyz before the server stops. B3 adds a configurable delay here.
+	a.setReadiness(readinessDraining)
 
 	// Stop HTTP server first.
 	if err := a.srv.shutdown(ctx); err != nil {

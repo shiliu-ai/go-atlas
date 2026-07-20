@@ -3,6 +3,7 @@ package atlas
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -52,7 +53,11 @@ func newServer(cfg serverConfig) *server {
 	}
 }
 
-func (s *server) start() error {
+// listen binds the server's TCP listener. A successful return means the
+// socket is accepting connections, so callers may flip readiness to ready
+// only after this succeeds — avoiding a window where /readyz reports ready
+// before the listener is up.
+func (s *server) listen() (net.Listener, error) {
 	s.srv = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.cfg.Port),
 		Handler:      s.engine,
@@ -60,8 +65,17 @@ func (s *server) start() error {
 		WriteTimeout: s.cfg.WriteTimeout,
 	}
 
-	if err := s.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("atlas: server listen: %w", err)
+	ln, err := net.Listen("tcp", s.srv.Addr)
+	if err != nil {
+		return nil, fmt.Errorf("atlas: server listen: %w", err)
+	}
+	return ln, nil
+}
+
+// serve serves requests on the bound listener until the server is shut down.
+func (s *server) serve(ln net.Listener) error {
+	if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("atlas: server serve: %w", err)
 	}
 	return nil
 }
