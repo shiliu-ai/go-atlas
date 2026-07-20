@@ -69,3 +69,55 @@ func TestDo_ConnectionError_RetryGatedByMethod(t *testing.T) {
 		})
 	}
 }
+
+func TestNewClient_TransportPoolDefaults(t *testing.T) {
+	c := NewClient(Config{}, nil)
+
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", c.http.Transport)
+	}
+	if tr.MaxIdleConns != 256 {
+		t.Errorf("MaxIdleConns = %d, want 256", tr.MaxIdleConns)
+	}
+	if tr.MaxIdleConnsPerHost != 64 {
+		t.Errorf("MaxIdleConnsPerHost = %d, want 64", tr.MaxIdleConnsPerHost)
+	}
+	if tr.IdleConnTimeout != 90*time.Second {
+		t.Errorf("IdleConnTimeout = %v, want 90s", tr.IdleConnTimeout)
+	}
+	if tr.MaxConnsPerHost != 0 {
+		t.Errorf("MaxConnsPerHost = %d, want 0 (unlimited)", tr.MaxConnsPerHost)
+	}
+	// A custom DialContext disables HTTP/2 unless ForceAttemptHTTP2 is set;
+	// guard that non-obvious correctness setting against future regressions.
+	if !tr.ForceAttemptHTTP2 {
+		t.Error("ForceAttemptHTTP2 = false, want true (custom DialContext otherwise disables HTTP/2)")
+	}
+}
+
+func TestNewClient_TransportPoolOverrides(t *testing.T) {
+	c := NewClient(Config{
+		MaxIdleConns:        10,
+		MaxIdleConnsPerHost: 5,
+		MaxConnsPerHost:     7,
+		IdleConnTimeout:     30 * time.Second,
+	}, nil)
+
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", c.http.Transport)
+	}
+	if tr.MaxIdleConns != 10 {
+		t.Errorf("MaxIdleConns = %d, want 10", tr.MaxIdleConns)
+	}
+	if tr.MaxIdleConnsPerHost != 5 {
+		t.Errorf("MaxIdleConnsPerHost = %d, want 5", tr.MaxIdleConnsPerHost)
+	}
+	if tr.MaxConnsPerHost != 7 {
+		t.Errorf("MaxConnsPerHost = %d, want 7", tr.MaxConnsPerHost)
+	}
+	if tr.IdleConnTimeout != 30*time.Second {
+		t.Errorf("IdleConnTimeout = %v, want 30s", tr.IdleConnTimeout)
+	}
+}

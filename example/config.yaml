@@ -115,6 +115,12 @@ httpclient:
   timeout: 5s
   max_retries: 2
   retry_wait: 1s
+  # Connection pool (optional; sane defaults shown). Tune when pointing many
+  # concurrent requests at a single upstream host such as an internal LB domain.
+  # max_idle_conns: 256
+  # max_idle_conns_per_host: 64
+  # max_conns_per_host: 0        # 0 = unlimited
+  # idle_conn_timeout: 90s
 
 # Inter-service communication: register upstream services by name.
 # Each service inherits httpclient defaults unless overridden.

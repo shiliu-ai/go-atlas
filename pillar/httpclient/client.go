@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"time"
 
@@ -23,6 +24,15 @@ type Config struct {
 	Timeout    time.Duration `mapstructure:"timeout"`
 	MaxRetries int           `mapstructure:"max_retries"`
 	RetryWait  time.Duration `mapstructure:"retry_wait"`
+
+	// Connection pool tuning. Zero values fall back to sane defaults in
+	// NewClient. Defaults target a single upstream host (e.g. an internal
+	// LB domain), where net/http's default MaxIdleConnsPerHost of 2 causes
+	// excessive reconnects under concurrency.
+	MaxIdleConns        int           `mapstructure:"max_idle_conns"`
+	MaxIdleConnsPerHost int           `mapstructure:"max_idle_conns_per_host"`
+	MaxConnsPerHost     int           `mapstructure:"max_conns_per_host"`
+	IdleConnTimeout     time.Duration `mapstructure:"idle_conn_timeout"`
 }
 
 // Client is an HTTP client with timeout, retry, tracing, and logging.
@@ -43,12 +53,37 @@ func NewClient(cfg Config, logger log.Logger) *Client {
 	if cfg.RetryWait == 0 {
 		cfg.RetryWait = 500 * time.Millisecond
 	}
+	if cfg.MaxIdleConns == 0 {
+		cfg.MaxIdleConns = 256
+	}
+	if cfg.MaxIdleConnsPerHost == 0 {
+		cfg.MaxIdleConnsPerHost = 64
+	}
+	// MaxConnsPerHost == 0 means unlimited (net/http default); leave as configured.
+	if cfg.IdleConnTimeout == 0 {
+		cfg.IdleConnTimeout = 90 * time.Second
+	}
 	if logger == nil {
 		logger = log.Global()
 	}
 
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          cfg.MaxIdleConns,
+		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+		MaxConnsPerHost:       cfg.MaxConnsPerHost,
+		IdleConnTimeout:       cfg.IdleConnTimeout,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &Client{
-		http:   &http.Client{Timeout: cfg.Timeout},
+		http:   &http.Client{Timeout: cfg.Timeout, Transport: transport},
 		cfg:    cfg,
 		logger: logger,
 	}
