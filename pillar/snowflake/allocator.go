@@ -8,11 +8,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/shiliu-ai/go-atlas/artifact/id"
 )
 
-// maxWorkerID is the largest Snowflake worker ID (must match artifact/id's
-// 10-bit worker field: (1<<10)-1).
-const maxWorkerID = 1023
+// maxWorkerID is the largest Snowflake worker ID, sourced from artifact/id so
+// the allocator's scan range can never drift from the generator's worker field.
+const maxWorkerID = id.MaxWorkerID
 
 // Allocator obtains and maintains a unique worker ID.
 type Allocator interface {

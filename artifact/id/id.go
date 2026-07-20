@@ -3,8 +3,8 @@ package id
 import (
 	"crypto/rand"
 	"fmt"
-	"sync/atomic"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -112,25 +112,26 @@ const (
 	epoch        = int64(1704067200000) // 2024-01-01 00:00:00 UTC in ms
 	workerBits   = 10
 	sequenceBits = 12
-	maxWorkerID  = (1 << workerBits) - 1
-	maxSequence  = (1 << sequenceBits) - 1
-	timeShift    = workerBits + sequenceBits
-	workerShift  = sequenceBits
+	// MaxWorkerID is the largest valid Snowflake worker ID (10-bit field).
+	MaxWorkerID = (1 << workerBits) - 1
+	maxSequence = (1 << sequenceBits) - 1
+	timeShift   = workerBits + sequenceBits
+	workerShift = sequenceBits
 )
 
 // Snowflake generates unique 64-bit IDs based on Twitter's Snowflake algorithm.
 type Snowflake struct {
-	mu        sync.Mutex
-	workerID  int64
-	sequence  int64
-	lastTime  int64
+	mu       sync.Mutex
+	workerID int64
+	sequence int64
+	lastTime int64
 }
 
 // NewSnowflake creates a Snowflake generator.
 // workerID must be between 0 and 1023.
 func NewSnowflake(workerID int64) (*Snowflake, error) {
-	if workerID < 0 || workerID > maxWorkerID {
-		return nil, fmt.Errorf("id: workerID must be between 0 and %d", maxWorkerID)
+	if workerID < 0 || workerID > MaxWorkerID {
+		return nil, fmt.Errorf("id: workerID must be between 0 and %d", MaxWorkerID)
 	}
 	return &Snowflake{workerID: workerID}, nil
 }

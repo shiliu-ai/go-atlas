@@ -6,6 +6,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -64,6 +65,7 @@ type RedisLimiter struct {
 	ownsClient bool
 	rate       int
 	window     time.Duration
+	windowMS   string // window in ms, precomputed for the Lua ARGV
 	keyPrefix  string
 
 	metrics limiterMetrics
@@ -109,15 +111,20 @@ func NewWithClient(client *redis.Client, rate int, window time.Duration, keyPref
 	if keyPrefix == "" {
 		keyPrefix = "ratelimit:"
 	}
-	return &RedisLimiter{client: client, rate: rate, window: window, keyPrefix: keyPrefix}, nil
+	return &RedisLimiter{
+		client:    client,
+		rate:      rate,
+		window:    window,
+		windowMS:  strconv.FormatInt(window.Milliseconds(), 10),
+		keyPrefix: keyPrefix,
+	}, nil
 }
 
 // Allow reports whether the request for key may proceed under the fixed-window
 // limit. A Redis error is returned to the caller (the middleware fails open).
 func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
-	ms := fmt.Sprintf("%d", l.window.Milliseconds())
 	res, err := fixedWindow.Run(ctx, l.client,
-		[]string{l.keyPrefix + key}, ms, l.rate).Int64()
+		[]string{l.keyPrefix + key}, l.windowMS, l.rate).Int64()
 	if err != nil {
 		l.record("error")
 		return false, fmt.Errorf("ratelimit: %w", err)

@@ -84,7 +84,7 @@ func (a *Atlas) coreMiddleware() []gin.HandlerFunc {
 		limiter = store
 	}
 	if limiter != nil {
-		mw = append(mw, rateLimitMiddleware(limiter, nil, a.logger))
+		mw = append(mw, rateLimitMiddleware(limiter, a.logger))
 	}
 
 	return mw
@@ -285,17 +285,13 @@ type RateLimiter interface {
 }
 
 // rateLimitMiddleware limits requests using the given RateLimiter, keyed by
-// keyFunc (default: client IP). If the limiter backend errors it fails open
-// (allows the request) so an unavailable backend cannot take down the service.
-func rateLimitMiddleware(limiter RateLimiter, keyFunc func(c *gin.Context) string, logger log.Logger) gin.HandlerFunc {
-	if keyFunc == nil {
-		keyFunc = func(c *gin.Context) string { return c.ClientIP() }
-	}
-
+// client IP. If the limiter backend errors it fails open (allows the request)
+// so an unavailable backend cannot take down the service.
+func rateLimitMiddleware(limiter RateLimiter, logger log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), rateLimitTimeout)
 		defer cancel()
-		allowed, err := limiter.Allow(ctx, keyFunc(c))
+		allowed, err := limiter.Allow(ctx, c.ClientIP())
 		if err != nil {
 			logger.Warn(c.Request.Context(), "rate limiter backend error, failing open",
 				log.F("error", err))

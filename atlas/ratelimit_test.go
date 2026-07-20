@@ -33,7 +33,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := gin.New()
-			r.Use(rateLimitMiddleware(tc.limiter, nil, log.NewDefault(log.LevelError)))
+			r.Use(rateLimitMiddleware(tc.limiter, log.NewDefault(log.LevelError)))
 			r.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 			rec := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestRateLimitMiddleware_TimesOutFailsOpen(t *testing.T) {
 	defer func() { rateLimitTimeout = old }()
 
 	r := gin.New()
-	r.Use(rateLimitMiddleware(blockingLimiter{}, nil, log.NewDefault(log.LevelError)))
+	r.Use(rateLimitMiddleware(blockingLimiter{}, log.NewDefault(log.LevelError)))
 	r.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	rec := httptest.NewRecorder()
