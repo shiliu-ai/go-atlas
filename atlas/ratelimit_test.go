@@ -73,3 +73,30 @@ func TestMemStore_Allow(t *testing.T) {
 		t.Fatal("3rd request should be denied within the window")
 	}
 }
+
+// blockingLimiter blocks until its context is cancelled, to exercise the
+// Allow timeout / fail-open path.
+type blockingLimiter struct{}
+
+func (blockingLimiter) Allow(ctx context.Context, _ string) (bool, error) {
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+
+func TestRateLimitMiddleware_TimesOutFailsOpen(t *testing.T) {
+	old := rateLimitTimeout
+	rateLimitTimeout = 30 * time.Millisecond
+	defer func() { rateLimitTimeout = old }()
+
+	r := gin.New()
+	r.Use(rateLimitMiddleware(blockingLimiter{}, nil, log.NewDefault(log.LevelError)))
+	r.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("blocked limiter should time out and fail open (200), got %d", rec.Code)
+	}
+}

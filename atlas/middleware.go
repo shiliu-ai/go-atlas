@@ -65,10 +65,18 @@ func (a *Atlas) coreMiddleware() []gin.HandlerFunc {
 	if a.rateLimiter != nil {
 		limiter = a.rateLimiter
 	} else if a.coreCfg.Middleware.RateLimit.Rate > 0 {
+		window := a.coreCfg.Middleware.RateLimit.Window
+		if window <= 0 {
+			// A zero window would reset the bucket every request (allow all).
+			// Default to 1 minute and warn rather than silently disable limiting.
+			window = time.Minute
+			a.logger.Warn(context.Background(), "rate_limit.window unset or <=0; defaulting to 1m",
+				log.F("rate", a.coreCfg.Middleware.RateLimit.Rate))
+		}
 		store := &memStore{
 			buckets: make(map[string]*rlBucket),
 			rate:    a.coreCfg.Middleware.RateLimit.Rate,
-			window:  a.coreCfg.Middleware.RateLimit.Window,
+			window:  window,
 			done:    make(chan struct{}),
 		}
 		a.rateLimitStore = store
@@ -238,6 +246,11 @@ func corsMiddleware(cfg corsConfig) gin.HandlerFunc {
 
 // --- Rate limit middleware (in-memory) ---
 
+// rateLimitTimeout bounds each limiter backend call so a hung backend cannot
+// pin request goroutines; on timeout the middleware fails open. Var (not const)
+// for tests.
+var rateLimitTimeout = time.Second
+
 // RateLimiter reports whether a request identified by key may proceed.
 // Implementations may be local (in-process) or distributed (e.g. Redis via
 // pillar/ratelimit). Inject a distributed limiter with atlas.WithRateLimiter.
@@ -254,7 +267,9 @@ func rateLimitMiddleware(limiter RateLimiter, keyFunc func(c *gin.Context) strin
 	}
 
 	return func(c *gin.Context) {
-		allowed, err := limiter.Allow(c.Request.Context(), keyFunc(c))
+		ctx, cancel := context.WithTimeout(c.Request.Context(), rateLimitTimeout)
+		defer cancel()
+		allowed, err := limiter.Allow(ctx, keyFunc(c))
 		if err != nil {
 			logger.Warn(c.Request.Context(), "rate limiter backend error, failing open",
 				log.F("error", err))

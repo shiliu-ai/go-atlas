@@ -3,6 +3,7 @@ package atlas
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -120,6 +121,13 @@ func (a *Atlas) shutdown(ctx context.Context) error {
 	// Stop rate limiter cleanup goroutine if active.
 	if a.rateLimitStore != nil {
 		a.rateLimitStore.stop()
+	}
+
+	// Close an injected rate limiter that owns resources (e.g. a Redis client).
+	if closer, ok := a.rateLimiter.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			a.logger.Error(ctx, "rate limiter close error", log.F("error", err))
+		}
 	}
 
 	a.logger.Info(ctx, "atlas stopped", log.F("name", a.name))

@@ -39,10 +39,11 @@ type Config struct {
 
 // RedisLimiter is a distributed fixed-window RateLimiter backed by Redis.
 type RedisLimiter struct {
-	client    *redis.Client
-	rate      int
-	window    time.Duration
-	keyPrefix string
+	client     *redis.Client
+	ownsClient bool
+	rate       int
+	window     time.Duration
+	keyPrefix  string
 }
 
 // Ensure interface compliance.
@@ -56,9 +57,16 @@ func Redis(cfg Config) (*RedisLimiter, error) {
 		DB:       cfg.DB,
 	})
 	if err := client.Ping(context.Background()).Err(); err != nil {
+		_ = client.Close()
 		return nil, fmt.Errorf("ratelimit: redis ping: %w", err)
 	}
-	return NewWithClient(client, cfg.Rate, cfg.Window, cfg.KeyPrefix)
+	l, err := NewWithClient(client, cfg.Rate, cfg.Window, cfg.KeyPrefix)
+	if err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	l.ownsClient = true // Redis dialed this client, so it owns/closes it.
+	return l, nil
 }
 
 // NewWithClient constructs a RedisLimiter using an existing client (e.g. the
@@ -91,4 +99,13 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("ratelimit: %w", err)
 	}
 	return res == 1, nil
+}
+
+// Close closes the underlying Redis client only if this limiter dialed it
+// (via Redis). A client injected through NewWithClient is left to its owner.
+func (l *RedisLimiter) Close() error {
+	if l.ownsClient {
+		return l.client.Close()
+	}
+	return nil
 }

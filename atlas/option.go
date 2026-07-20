@@ -1,6 +1,8 @@
 package atlas
 
 import (
+	"reflect"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/shiliu-ai/go-atlas/aether/log"
@@ -46,5 +48,15 @@ func WithoutDefaultMiddleware() Option {
 // in-memory limiter, and rate limiting is enabled regardless of the
 // middleware.rate_limit config.
 func WithRateLimiter(rl RateLimiter) Option {
-	return func(a *Atlas) { a.rateLimiter = rl }
+	return func(a *Atlas) {
+		// Ignore nil / typed-nil (e.g. a nil *RedisLimiter) so a mis-wired
+		// limiter falls back to config instead of panicking on first request.
+		if rl == nil {
+			return
+		}
+		if v := reflect.ValueOf(rl); v.Kind() == reflect.Ptr && v.IsNil() {
+			return
+		}
+		a.rateLimiter = rl
+	}
 }
