@@ -59,8 +59,12 @@ func (a *Atlas) coreMiddleware() []gin.HandlerFunc {
 	}
 	mw = append(mw, corsMiddleware(corsConfig))
 
-	// Rate limit: only add if configured.
-	if a.coreCfg.Middleware.RateLimit.Rate > 0 {
+	// Rate limit: prefer an injected limiter (e.g. distributed Redis), else
+	// fall back to the local in-memory limiter when configured.
+	var limiter RateLimiter
+	if a.rateLimiter != nil {
+		limiter = a.rateLimiter
+	} else if a.coreCfg.Middleware.RateLimit.Rate > 0 {
 		store := &memStore{
 			buckets: make(map[string]*rlBucket),
 			rate:    a.coreCfg.Middleware.RateLimit.Rate,
@@ -68,14 +72,11 @@ func (a *Atlas) coreMiddleware() []gin.HandlerFunc {
 			done:    make(chan struct{}),
 		}
 		a.rateLimitStore = store
-
 		go store.cleanup()
-
-		cfg := rateLimitConfig{
-			Rate:   a.coreCfg.Middleware.RateLimit.Rate,
-			Window: a.coreCfg.Middleware.RateLimit.Window,
-		}
-		mw = append(mw, rateLimitMiddleware(cfg, store))
+		limiter = store
+	}
+	if limiter != nil {
+		mw = append(mw, rateLimitMiddleware(limiter, nil, a.logger))
 	}
 
 	return mw
@@ -237,22 +238,30 @@ func corsMiddleware(cfg corsConfig) gin.HandlerFunc {
 
 // --- Rate limit middleware (in-memory) ---
 
-// rateLimitConfig holds rate limiter configuration.
-type rateLimitConfig struct {
-	Rate    int
-	Window  time.Duration
-	KeyFunc func(c *gin.Context) string
+// RateLimiter reports whether a request identified by key may proceed.
+// Implementations may be local (in-process) or distributed (e.g. Redis via
+// pillar/ratelimit). Inject a distributed limiter with atlas.WithRateLimiter.
+type RateLimiter interface {
+	Allow(ctx context.Context, key string) (bool, error)
 }
 
-// rateLimitMiddleware returns a local in-memory token-bucket rate limiter middleware.
-func rateLimitMiddleware(cfg rateLimitConfig, store *memStore) gin.HandlerFunc {
-	if cfg.KeyFunc == nil {
-		cfg.KeyFunc = func(c *gin.Context) string { return c.ClientIP() }
+// rateLimitMiddleware limits requests using the given RateLimiter, keyed by
+// keyFunc (default: client IP). If the limiter backend errors it fails open
+// (allows the request) so an unavailable backend cannot take down the service.
+func rateLimitMiddleware(limiter RateLimiter, keyFunc func(c *gin.Context) string, logger log.Logger) gin.HandlerFunc {
+	if keyFunc == nil {
+		keyFunc = func(c *gin.Context) string { return c.ClientIP() }
 	}
 
 	return func(c *gin.Context) {
-		key := cfg.KeyFunc(c)
-		if !store.allow(key) {
+		allowed, err := limiter.Allow(c.Request.Context(), keyFunc(c))
+		if err != nil {
+			logger.Warn(c.Request.Context(), "rate limiter backend error, failing open",
+				log.F("error", err))
+			c.Next()
+			return
+		}
+		if !allowed {
 			response.Fail(c, errors.CodeTooManyRequests, "rate limit exceeded")
 			c.Abort()
 			return
@@ -272,6 +281,14 @@ type memStore struct {
 	rate    int
 	window  time.Duration
 	done    chan struct{}
+}
+
+// Ensure memStore satisfies RateLimiter.
+var _ RateLimiter = (*memStore)(nil)
+
+// Allow implements RateLimiter for the local in-memory store (never errors).
+func (s *memStore) Allow(_ context.Context, key string) (bool, error) {
+	return s.allow(key), nil
 }
 
 func (s *memStore) allow(key string) bool {

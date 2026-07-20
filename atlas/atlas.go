@@ -40,6 +40,10 @@ type Atlas struct {
 	// readiness holds the lifecycle readiness state served by /readyz
 	// (see readiness.go). Zero value is readinessStarting.
 	readiness atomic.Int32
+
+	// rateLimiter, if set via WithRateLimiter, replaces the default local
+	// rate limiter (e.g. a distributed Redis limiter from pillar/ratelimit).
+	rateLimiter RateLimiter
 }
 
 // New creates and initializes an Atlas instance.

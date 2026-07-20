@@ -40,3 +40,11 @@ func WithMiddleware(mw ...gin.HandlerFunc) Option {
 func WithoutDefaultMiddleware() Option {
 	return func(a *Atlas) { a.skipDefaultMW = true }
 }
+
+// WithRateLimiter injects a custom RateLimiter (for example a distributed
+// Redis limiter from pillar/ratelimit). When set it replaces the default
+// in-memory limiter, and rate limiting is enabled regardless of the
+// middleware.rate_limit config.
+func WithRateLimiter(rl RateLimiter) Option {
+	return func(a *Atlas) { a.rateLimiter = rl }
+}
