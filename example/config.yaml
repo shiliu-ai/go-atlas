@@ -115,6 +115,17 @@ telemetry:
     cardinality_limit: 2000     # per-instrument attribute-set cap
     exemplars: true             # link histogram buckets back to trace_ids
 
+# Snowflake worker-ID allocation (optional; enable by registering the
+# snowflake pillar). Leave worker_id unset to auto-allocate from Redis.
+# snowflake:
+#   # worker_id: 5            # static override; omit for Redis auto-allocation
+#   redis:
+#     addr: "127.0.0.1:6379"
+#   ttl: 30s
+#   renew_interval: 10s
+#   safety_margin: 5s
+#   fail_mode: safe           # safe (stop on lease loss) | besteffort
+
 httpclient:
   timeout: 5s
   max_retries: 2
