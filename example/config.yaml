@@ -5,6 +5,11 @@ server:
   read_timeout: 30s
   write_timeout: 30s
   shutdown_timeout: 10s
+  # Trusted reverse-proxy CIDRs. Empty (default) trusts no proxy, so ClientIP()
+  # is the socket peer and cannot be spoofed via X-Forwarded-For. Set this to
+  # your LB/ingress ranges to honor forwarded client IPs (e.g. for rate limiting).
+  # trusted_proxies:
+  #   - "10.0.0.0/8"
   # Wait this long after marking the instance draining (/readyz -> 503) before
   # stopping the server, so load balancers drain it first. 0 disables it.
   # Recommended in Kubernetes rolling updates, e.g. 5s.

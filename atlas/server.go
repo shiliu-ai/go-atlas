@@ -22,6 +22,11 @@ type serverConfig struct {
 	// stops the HTTP server. Default 0 disables the delay.
 	PreShutdownDelay time.Duration `mapstructure:"pre_shutdown_delay"`
 	Mode             string        `mapstructure:"mode"`
+	// TrustedProxies lists the CIDRs/IPs of trusted reverse proxies. When set,
+	// c.ClientIP() honors X-Forwarded-For from those hops; when empty (default),
+	// no proxy is trusted and ClientIP() is the direct socket peer — so clients
+	// cannot spoof their IP (and rate limiting) via X-Forwarded-For.
+	TrustedProxies []string `mapstructure:"trusted_proxies"`
 }
 
 // server is an internal HTTP server wrapping Gin.
@@ -50,6 +55,13 @@ func newServer(cfg serverConfig) *server {
 	}
 
 	engine := gin.New()
+
+	// Trust only the configured reverse proxies. With none configured, trust no
+	// proxy so ClientIP() is the direct socket peer and cannot be spoofed via
+	// X-Forwarded-For. gin's default (trust everything) is deliberately avoided.
+	if err := engine.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		panic(fmt.Sprintf("atlas: invalid server.trusted_proxies: %v", err))
+	}
 
 	return &server{
 		engine: engine,
