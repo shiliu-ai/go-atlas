@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/shiliu-ai/go-atlas/aether/log"
 )
@@ -84,8 +85,19 @@ func (a *Atlas) shutdown(ctx context.Context) error {
 	a.logger.Info(ctx, "atlas shutting down", log.F("name", a.name))
 
 	// Refuse new traffic first so load balancers drain this instance via
-	// /readyz before the server stops. B3 adds a configurable delay here.
+	// /readyz before the server stops.
 	a.setReadiness(readinessDraining)
+
+	// Give load balancers time to observe the draining state and stop routing
+	// new traffic before we stop accepting. Endpoint removal propagates
+	// asynchronously in Kubernetes, so this closes the black-hole window.
+	if d := a.srv.cfg.PreShutdownDelay; d > 0 {
+		a.logger.Info(ctx, "pre-shutdown drain delay", log.F("delay", d.String()))
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+		}
+	}
 
 	// Stop HTTP server first.
 	if err := a.srv.shutdown(ctx); err != nil {

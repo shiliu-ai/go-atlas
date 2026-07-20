@@ -5,6 +5,10 @@ server:
   read_timeout: 30s
   write_timeout: 30s
   shutdown_timeout: 10s
+  # Wait this long after marking the instance draining (/readyz -> 503) before
+  # stopping the server, so load balancers drain it first. 0 disables it.
+  # Recommended in Kubernetes rolling updates, e.g. 5s.
+  # pre_shutdown_delay: 5s
 
 log:
   level: "debug"

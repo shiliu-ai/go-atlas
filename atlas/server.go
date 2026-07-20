@@ -17,7 +17,11 @@ type serverConfig struct {
 	ReadTimeout     time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
-	Mode            string        `mapstructure:"mode"`
+	// PreShutdownDelay, if > 0, is how long shutdown() waits after marking the
+	// instance draining (so load balancers drain it via /readyz) before it
+	// stops the HTTP server. Default 0 disables the delay.
+	PreShutdownDelay time.Duration `mapstructure:"pre_shutdown_delay"`
+	Mode             string        `mapstructure:"mode"`
 }
 
 // server is an internal HTTP server wrapping Gin.
