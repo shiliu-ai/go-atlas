@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/shiliu-ai/go-atlas/aether/log"
 )
@@ -154,5 +157,49 @@ func TestManager_Stop_CancelsContext(t *testing.T) {
 	}
 	if m.ctx.Err() == nil {
 		t.Error("Stop did not cancel the manager context")
+	}
+}
+
+func newTestReader(t *testing.T) *sdkmetric.ManualReader {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(prev) })
+	return reader
+}
+
+func sumCounter(t *testing.T, reader *sdkmetric.ManualReader, name string) int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var total int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
+				for _, dp := range sum.DataPoints {
+					total += dp.Value
+				}
+			}
+		}
+	}
+	return total
+}
+
+func TestScheduler_Metrics(t *testing.T) {
+	reader := newTestReader(t)
+	m := testManager() // existing helper: &Manager{cron, logger}
+
+	m.runJob(Job{Name: "ok", Spec: "@every 1h", Run: func(context.Context) error { return nil }})
+	m.runJob(Job{Name: "boom", Spec: "@every 1h", Run: func(context.Context) error { return errors.New("x") }})
+
+	if got := sumCounter(t, reader, "scheduler.job.runs"); got != 2 {
+		t.Fatalf("scheduler.job.runs = %d, want 2", got)
 	}
 }

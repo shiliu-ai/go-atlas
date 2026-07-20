@@ -18,6 +18,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/shiliu-ai/go-atlas/aether/log"
 	"github.com/shiliu-ai/go-atlas/artifact/id"
 )
@@ -95,6 +99,23 @@ func (g *Generator) Generate() (int64, error) {
 	return g.sf.Load().Generate()
 }
 
+type snowMetrics struct {
+	once   sync.Once
+	events metric.Int64Counter
+}
+
+func (m *Manager) recordEvent(event string) {
+	m.metrics.once.Do(func() {
+		meter := otel.Meter("github.com/shiliu-ai/go-atlas/pillar/snowflake")
+		m.metrics.events, _ = meter.Int64Counter("snowflake.lease.events",
+			metric.WithDescription("Worker-ID lease events (renewed|renew_failed|lost|reacquired|gate_closed)"))
+	})
+	if m.metrics.events != nil {
+		m.metrics.events.Add(context.Background(), 1,
+			metric.WithAttributes(attribute.String("event", event)))
+	}
+}
+
 // Manager is the snowflake Pillar.
 type Manager struct {
 	logger    log.Logger
@@ -113,6 +134,8 @@ type Manager struct {
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
+
+	metrics snowMetrics
 }
 
 func (m *Manager) setLease(t time.Time) { m.leaseExpiresNano.Store(t.UnixNano()) }
@@ -141,14 +164,17 @@ func (m *Manager) tryRenew(ctx context.Context) {
 	if err == nil && ok {
 		m.setLease(time.Now().Add(m.ttl))
 		m.gen.setOpen(true)
+		m.recordEvent("renewed")
 		return
 	}
 	if err != nil {
 		m.logger.Warn(ctx, "snowflake lease renew failed", log.F("error", err))
+		m.recordEvent("renew_failed")
 		return // transient: watchdog closes the gate if the lease runs out
 	}
 	// Not the owner anymore: the lease was lost. Re-acquire a fresh worker ID.
 	m.logger.Warn(ctx, "snowflake lease lost, re-acquiring worker id")
+	m.recordEvent("lost")
 	m.reacquire(ctx)
 }
 
@@ -176,6 +202,7 @@ func (m *Manager) reacquire(ctx context.Context) {
 	m.gen.setSnowflake(sf)
 	m.setLease(time.Now().Add(m.ttl))
 	m.gen.setOpen(true)
+	m.recordEvent("reacquired")
 	m.logger.Info(ctx, "snowflake worker id re-acquired", log.F("worker_id", wid))
 }
 
@@ -190,5 +217,6 @@ func (m *Manager) checkLease(now time.Time) {
 	}
 	if m.gen.open.Swap(false) {
 		m.logger.Error(context.Background(), "snowflake gate closed: lease within safety margin")
+		m.recordEvent("gate_closed")
 	}
 }

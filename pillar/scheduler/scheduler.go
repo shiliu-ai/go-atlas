@@ -3,8 +3,12 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/robfig/cron/v3"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/shiliu-ai/go-atlas/aether/log"
 )
@@ -33,6 +37,23 @@ type Job struct {
 	Run func(ctx context.Context) error
 }
 
+type schedMetrics struct {
+	once sync.Once
+	runs metric.Int64Counter
+}
+
+func (m *Manager) recordRun(result string) {
+	m.metrics.once.Do(func() {
+		meter := otel.Meter("github.com/shiliu-ai/go-atlas/pillar/scheduler")
+		m.metrics.runs, _ = meter.Int64Counter("scheduler.job.runs",
+			metric.WithDescription("Scheduled job executions by result (success|skipped|failed)"))
+	})
+	if m.metrics.runs != nil {
+		m.metrics.runs.Add(context.Background(), 1,
+			metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
 // Manager is the scheduler Pillar.
 type Manager struct {
 	cron   *cron.Cron
@@ -42,6 +63,8 @@ type Manager struct {
 	// so in-flight jobs can observe shutdown. Set in Init.
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	metrics schedMetrics
 }
 
 // Register schedules a job. Call it after atlas.New() and before Run().
@@ -67,6 +90,7 @@ func (m *Manager) runJob(job Job) {
 		if r := recover(); r != nil {
 			m.logger.Error(ctx, "scheduler job panicked",
 				log.F("job", job.Name), log.F("error", r))
+			m.recordRun("failed")
 		}
 	}()
 
@@ -75,11 +99,13 @@ func (m *Manager) runJob(job Job) {
 		if err != nil {
 			m.logger.Error(ctx, "scheduler job lock error",
 				log.F("job", job.Name), log.F("error", err))
+			m.recordRun("skipped")
 			return
 		}
 		if !acquired {
 			m.logger.Debug(ctx, "scheduler job skipped: lock held elsewhere",
 				log.F("job", job.Name))
+			m.recordRun("skipped")
 			return
 		}
 		defer func() {
@@ -93,5 +119,8 @@ func (m *Manager) runJob(job Job) {
 	if err := job.Run(ctx); err != nil {
 		m.logger.Error(ctx, "scheduler job failed",
 			log.F("job", job.Name), log.F("error", err))
+		m.recordRun("failed")
+		return
 	}
+	m.recordRun("success")
 }

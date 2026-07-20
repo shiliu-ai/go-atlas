@@ -6,9 +6,13 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/shiliu-ai/go-atlas/atlas"
 )
@@ -37,6 +41,23 @@ type Config struct {
 	KeyPrefix string        // default "ratelimit:"
 }
 
+type limiterMetrics struct {
+	once      sync.Once
+	decisions metric.Int64Counter
+}
+
+func (l *RedisLimiter) record(result string) {
+	l.metrics.once.Do(func() {
+		meter := otel.Meter("github.com/shiliu-ai/go-atlas/pillar/ratelimit")
+		l.metrics.decisions, _ = meter.Int64Counter("ratelimit.decisions",
+			metric.WithDescription("Rate-limit decisions by result (allowed|denied|error)"))
+	})
+	if l.metrics.decisions != nil {
+		l.metrics.decisions.Add(context.Background(), 1,
+			metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
 // RedisLimiter is a distributed fixed-window RateLimiter backed by Redis.
 type RedisLimiter struct {
 	client     *redis.Client
@@ -44,6 +65,8 @@ type RedisLimiter struct {
 	rate       int
 	window     time.Duration
 	keyPrefix  string
+
+	metrics limiterMetrics
 }
 
 // Ensure interface compliance.
@@ -96,9 +119,15 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
 	res, err := fixedWindow.Run(ctx, l.client,
 		[]string{l.keyPrefix + key}, ms, l.rate).Int64()
 	if err != nil {
+		l.record("error")
 		return false, fmt.Errorf("ratelimit: %w", err)
 	}
-	return res == 1, nil
+	if res == 1 {
+		l.record("allowed")
+		return true, nil
+	}
+	l.record("denied")
+	return false, nil
 }
 
 // Close closes the underlying Redis client only if this limiter dialed it

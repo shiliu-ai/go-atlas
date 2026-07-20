@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/shiliu-ai/go-atlas/atlas"
 )
@@ -42,4 +45,49 @@ func TestNewWithClient_CloseDoesNotCloseSharedClient(t *testing.T) {
 		t.Fatal("shared client was closed by limiter.Close()")
 	}
 	_ = client.Close()
+}
+
+func newTestReader(t *testing.T) *sdkmetric.ManualReader {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(prev) })
+	return reader
+}
+
+func sumCounter(t *testing.T, reader *sdkmetric.ManualReader, name string) int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var total int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
+				for _, dp := range sum.DataPoints {
+					total += dp.Value
+				}
+			}
+		}
+	}
+	return total
+}
+
+func TestRateLimit_Metrics(t *testing.T) {
+	reader := newTestReader(t)
+	l := &RedisLimiter{keyPrefix: "ratelimit:"} // no client needed for record()
+
+	l.record("allowed")
+	l.record("allowed")
+	l.record("denied")
+
+	if got := sumCounter(t, reader, "ratelimit.decisions"); got != 3 {
+		t.Fatalf("ratelimit.decisions = %d, want 3", got)
+	}
 }

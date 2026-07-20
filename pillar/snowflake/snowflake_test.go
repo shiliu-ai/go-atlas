@@ -7,6 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	"github.com/shiliu-ai/go-atlas/aether/log"
 	"github.com/shiliu-ai/go-atlas/artifact/id"
 )
@@ -217,5 +221,53 @@ func TestNewRedisAllocator_Unreachable(t *testing.T) {
 	cfg := Config{Redis: RedisConfig{Addr: "127.0.0.1:1"}, TTL: 30 * time.Second, KeyPrefix: "snowflake:worker:"}
 	if _, err := newRedisAllocator(cfg); err == nil {
 		t.Fatal("expected error for unreachable redis")
+	}
+}
+
+func newTestReader(t *testing.T) *sdkmetric.ManualReader {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(prev) })
+	return reader
+}
+
+func sumCounter(t *testing.T, reader *sdkmetric.ManualReader, name string) int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	var total int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
+				for _, dp := range sum.DataPoints {
+					total += dp.Value
+				}
+			}
+		}
+	}
+	return total
+}
+
+func TestSnowflake_Metrics(t *testing.T) {
+	reader := newTestReader(t)
+	m := testManager(t) // existing helper
+	m.allocator = &reAllocator{renewOK: true}
+
+	m.tryRenew(context.Background()) // -> renewed
+	m.allocator = &reAllocator{renewOK: false, nextID: 9}
+	m.tryRenew(context.Background()) // -> lost + reacquired
+	m.setLease(time.Now().Add(-time.Second))
+	m.checkLease(time.Now()) // -> gate_closed
+
+	if got := sumCounter(t, reader, "snowflake.lease.events"); got < 3 {
+		t.Fatalf("snowflake.lease.events = %d, want >= 3", got)
 	}
 }
