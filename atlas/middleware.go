@@ -92,6 +92,36 @@ func (a *Atlas) coreMiddleware() []gin.HandlerFunc {
 
 // --- Recovery middleware ---
 
+// sensitiveHeaders are redacted from the request dump on panic so credentials
+// never land in logs.
+var sensitiveHeaders = []string{
+	"Authorization",
+	"Proxy-Authorization",
+	"Cookie",
+	"Set-Cookie",
+	"X-Authorization-Token",
+}
+
+// redactedRequestDump dumps a request (headers only, no body) for panic logging
+// with sensitive headers redacted. It clones the request so the original is
+// untouched. Returns "" for a nil request or on dump error.
+func redactedRequestDump(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	safe := r.Clone(r.Context())
+	for _, h := range sensitiveHeaders {
+		if safe.Header.Get(h) != "" {
+			safe.Header.Set(h, "[REDACTED]")
+		}
+	}
+	dump, err := httputil.DumpRequest(safe, false)
+	if err != nil {
+		return ""
+	}
+	return string(dump)
+}
+
 // recoveryMiddleware recovers from panics and logs the stack trace.
 func recoveryMiddleware(logger log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -99,13 +129,9 @@ func recoveryMiddleware(logger log.Logger) gin.HandlerFunc {
 			if r := recover(); r != nil {
 				stack := string(debug.Stack())
 
-				// Try to capture the request for debugging.
-				var reqDump string
-				if c.Request != nil {
-					if dump, err := httputil.DumpRequest(c.Request, false); err == nil {
-						reqDump = string(dump)
-					}
-				}
+				// Capture the request for debugging, with sensitive headers
+				// redacted so credentials never land in logs.
+				reqDump := redactedRequestDump(c.Request)
 
 				fields := []log.Field{
 					log.F("error", r),

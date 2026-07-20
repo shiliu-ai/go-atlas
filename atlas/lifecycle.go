@@ -13,6 +13,10 @@ import (
 	"github.com/shiliu-ai/go-atlas/aether/log"
 )
 
+// maxPreShutdownDelay caps server.pre_shutdown_delay so a mis-set or hostile
+// config value cannot hang termination until the orchestrator SIGKILLs.
+const maxPreShutdownDelay = 2 * time.Minute
+
 // run starts all Pillar Starters, the HTTP server, and waits for a
 // termination signal before performing graceful shutdown.
 func (a *Atlas) run(ctx context.Context) error {
@@ -93,6 +97,11 @@ func (a *Atlas) shutdown(ctx context.Context) error {
 	// new traffic before we stop accepting. Endpoint removal propagates
 	// asynchronously in Kubernetes, so this closes the black-hole window.
 	if d := a.srv.cfg.PreShutdownDelay; d > 0 {
+		if d > maxPreShutdownDelay {
+			a.logger.Warn(ctx, "pre_shutdown_delay exceeds cap; clamping",
+				log.F("configured", d.String()), log.F("cap", maxPreShutdownDelay.String()))
+			d = maxPreShutdownDelay
+		}
 		a.logger.Info(ctx, "pre-shutdown drain delay", log.F("delay", d.String()))
 		select {
 		case <-time.After(d):
