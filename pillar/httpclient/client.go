@@ -90,8 +90,11 @@ var idempotentMethods = map[string]bool{
 }
 
 // Do executes an HTTP request with tracing, logging, and retry.
-// Non-idempotent methods (POST, PATCH) are not retried unless the error
-// is a connection-level failure (the request was never sent).
+// Retries — both connection-level errors and retryable status codes — apply
+// only to idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS). Non-idempotent
+// methods (POST, PATCH) are never retried: a connection-level error can occur
+// after the request reached the server, so re-sending risks duplicate side
+// effects (e.g. double charge).
 func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 	tracer := otel.Tracer("httpclient")
 	ctx, span := tracer.Start(ctx, fmt.Sprintf("HTTP %s %s", req.Method, req.URL.Path))
@@ -139,13 +142,19 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 				log.F("attempt", i+1),
 				log.F("error", err),
 			)
-			// Connection-level errors are safe to retry for any method.
-			if i < attempts-1 {
+			// A connection-level error may mean the request already reached the
+			// server and it is mid-processing (e.g. a client timeout after the
+			// request was sent). Retrying a non-idempotent method here can
+			// duplicate side effects (double charge), so gate on canRetry —
+			// the same rule as the status-code retry path below.
+			if canRetry && i < attempts-1 {
 				if waitErr := backoffSleep(ctx, c.cfg.RetryWait, i); waitErr != nil {
 					return nil, waitErr
 				}
+				continue
 			}
-			continue
+			// Terminal failure: fall through to span error recording below.
+			break
 		}
 
 		body, err := io.ReadAll(resp.Body)
@@ -178,7 +187,7 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 
 	span.RecordError(lastErr)
 	span.SetStatus(codes.Error, lastErr.Error())
-	return nil, fmt.Errorf("httpclient: all %d attempts failed: %w", attempts, lastErr)
+	return nil, fmt.Errorf("httpclient: request failed: %w", lastErr)
 }
 
 // backoffSleep sleeps with exponential backoff + jitter, respecting context cancellation.
