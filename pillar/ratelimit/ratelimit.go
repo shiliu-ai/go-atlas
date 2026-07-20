@@ -70,8 +70,10 @@ func NewWithClient(client *redis.Client, rate int, window time.Duration, keyPref
 	if rate <= 0 {
 		return nil, fmt.Errorf("ratelimit: rate must be > 0")
 	}
-	if window <= 0 {
-		return nil, fmt.Errorf("ratelimit: window must be > 0")
+	if window < time.Millisecond {
+		// The Lua PEXPIRE uses window.Milliseconds(); a sub-ms window truncates
+		// to 0, which deletes the key and disables limiting.
+		return nil, fmt.Errorf("ratelimit: window must be >= 1ms")
 	}
 	if keyPrefix == "" {
 		keyPrefix = "ratelimit:"
