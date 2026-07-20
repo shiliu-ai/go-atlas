@@ -74,6 +74,19 @@ func TestMemStore_Allow(t *testing.T) {
 	}
 }
 
+// TestMemStore_StopIdempotent verifies stop() can be called more than once
+// without panicking on a double channel close.
+func TestMemStore_StopIdempotent(t *testing.T) {
+	s := &memStore{
+		buckets: make(map[string]*rlBucket),
+		rate:    1,
+		window:  time.Minute,
+		done:    make(chan struct{}),
+	}
+	s.stop()
+	s.stop() // must not panic
+}
+
 // blockingLimiter blocks until its context is cancelled, to exercise the
 // Allow timeout / fail-open path.
 type blockingLimiter struct{}

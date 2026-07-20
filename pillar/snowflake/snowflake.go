@@ -5,7 +5,9 @@
 // A background watchdog closes a generation gate before the lease could expire,
 // so generation stops (fail-safe) rather than risk two instances sharing a
 // worker ID. If the lease is lost, the pillar re-acquires a fresh worker ID and
-// resumes. Uniqueness holds as long as the process is not stalled (e.g. a GC or
+// resumes. The watchdog tracks the lease deadline on Go's monotonic clock, so it
+// stays correct across wall-clock steps (NTP correction, VM migration).
+// Uniqueness holds as long as the process is not stalled (e.g. a GC or
 // scheduling pause) for longer than roughly ttl - renew_interval; size the
 // timings accordingly for stall-prone workloads.
 package snowflake
@@ -128,9 +130,15 @@ type Manager struct {
 	renew    time.Duration
 	safety   time.Duration
 
-	// leaseExpiresNano is the local estimate (unix nano) of when the lease ends;
-	// written by the renewer goroutine, read by the watchdog goroutine.
-	leaseExpiresNano atomic.Int64
+	// leaseExpires is the local estimate of when the lease ends; written by the
+	// renewer goroutine, read by the watchdog goroutine. Stored as a time.Time
+	// (not unix nanos) to preserve Go's monotonic clock reading: the watchdog
+	// compares it against time.Now(), so anchoring both to the monotonic clock
+	// keeps the gate correct across wall-clock steps (NTP correction, VM
+	// migration). A backward wall-clock jump must never trick the watchdog into
+	// holding the gate open past the real lease expiry.
+	leaseMu      sync.Mutex
+	leaseExpires time.Time
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -138,11 +146,25 @@ type Manager struct {
 	metrics snowMetrics
 }
 
-func (m *Manager) setLease(t time.Time) { m.leaseExpiresNano.Store(t.UnixNano()) }
-func (m *Manager) lease() time.Time     { return time.Unix(0, m.leaseExpiresNano.Load()) }
+func (m *Manager) setLease(t time.Time) {
+	m.leaseMu.Lock()
+	m.leaseExpires = t
+	m.leaseMu.Unlock()
+}
+
+func (m *Manager) lease() time.Time {
+	m.leaseMu.Lock()
+	defer m.leaseMu.Unlock()
+	return m.leaseExpires
+}
 
 // Generate returns a new unique snowflake ID (see Generator.Generate).
-func (m *Manager) Generate() (int64, error) { return m.gen.Generate() }
+func (m *Manager) Generate() (int64, error) {
+	if m.gen == nil {
+		return 0, ErrUnavailable
+	}
+	return m.gen.Generate()
+}
 
 // MustGenerate returns a new ID or panics.
 func (m *Manager) MustGenerate() int64 {
@@ -160,9 +182,14 @@ func (m *Manager) tryRenew(ctx context.Context) {
 	rctx, cancel := context.WithTimeout(ctx, m.renew)
 	defer cancel()
 
+	// Stamp the lease estimate from before the RPC: Redis applies the new expiry
+	// when it executes PEXPIRE, not when the reply reaches us, so anchoring to the
+	// pre-call time keeps the local estimate conservative (never longer than the
+	// real lease) even under Redis latency.
+	t0 := time.Now()
 	ok, err := m.allocator.Renew(rctx)
 	if err == nil && ok {
-		m.setLease(time.Now().Add(m.ttl))
+		m.setLease(t0.Add(m.ttl))
 		m.gen.setOpen(true)
 		m.recordEvent("renewed")
 		return
@@ -189,6 +216,9 @@ func (m *Manager) reacquire(ctx context.Context) {
 	// so we never keep two worker-id leases at once.
 	_ = m.allocator.Release(rctx)
 
+	// Anchor the lease estimate before Acquire (see tryRenew) so it stays
+	// conservative relative to the SetNX that establishes the new lease in Redis.
+	t0 := time.Now()
 	wid, err := m.allocator.Acquire(rctx)
 	if err != nil {
 		m.logger.Warn(ctx, "snowflake re-acquire failed", log.F("error", err))
@@ -200,7 +230,7 @@ func (m *Manager) reacquire(ctx context.Context) {
 		return
 	}
 	m.gen.setSnowflake(sf)
-	m.setLease(time.Now().Add(m.ttl))
+	m.setLease(t0.Add(m.ttl))
 	m.gen.setOpen(true)
 	m.recordEvent("reacquired")
 	m.logger.Info(ctx, "snowflake worker id re-acquired", log.F("worker_id", wid))

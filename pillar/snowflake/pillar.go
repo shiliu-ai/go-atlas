@@ -63,6 +63,7 @@ func (m *Manager) Init(core *atlas.Core) error {
 		m.allocator = alloc
 	}
 
+	t0 := time.Now()
 	wid, err := m.allocator.Acquire(context.Background())
 	if err != nil {
 		return fmt.Errorf("snowflake: %w", err)
@@ -74,7 +75,9 @@ func (m *Manager) Init(core *atlas.Core) error {
 	m.gen = &Generator{}
 	m.gen.setSnowflake(sf)
 	m.gen.setOpen(true)
-	m.setLease(time.Now().Add(cfg.TTL))
+	// Anchor the lease estimate to before Acquire so it is never longer than the
+	// real Redis TTL (see Manager.tryRenew).
+	m.setLease(t0.Add(cfg.TTL))
 
 	mode := "static"
 	if !m.static {

@@ -157,6 +157,14 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 	}
 
 	canRetry := idempotentMethods[req.Method]
+	// Make the buffered body replayable: set ContentLength and GetBody so each
+	// attempt (and the transport itself) can rewind to a fresh reader.
+	if bodyBytes != nil {
+		req.ContentLength = int64(len(bodyBytes))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+	}
 	var lastErr error
 	attempts := c.cfg.MaxRetries + 1
 
@@ -227,7 +235,14 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*Response, error) {
 
 // backoffSleep sleeps with exponential backoff + jitter, respecting context cancellation.
 func backoffSleep(ctx context.Context, base time.Duration, attempt int) error {
-	backoff := base * (1 << attempt) // exponential: base, 2*base, 4*base, ...
+	// Exponential: base, 2*base, 4*base, ... Cap the shift so a pathological
+	// attempt count can't overflow the int64 duration to a non-positive value
+	// (which would panic rand.Int64N).
+	shift := min(attempt, 16)
+	backoff := base << shift
+	if backoff <= 0 {
+		backoff = base
+	}
 	// Add jitter: +/-50% of backoff.
 	jitter := time.Duration(rand.Int64N(int64(backoff))) - backoff/2
 	backoff += jitter

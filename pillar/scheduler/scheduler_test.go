@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,6 +94,50 @@ func TestManager_RunJob_RecoversPanic(t *testing.T) {
 	job := Job{Name: "panicky", Spec: "@every 1h", Run: func(context.Context) error { panic("boom") }}
 	// Must not panic.
 	testManager().runJob(job)
+}
+
+// TestManager_Register_SkipsOverlappingRuns verifies that when a job runs longer
+// than its interval, the next fire is skipped rather than started concurrently.
+// robfig/cron rounds @every intervals up to a 1s minimum, so the blocked run
+// must span more than one such interval.
+func TestManager_Register_SkipsOverlappingRuns(t *testing.T) {
+	m := testManager()
+	var concurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+	var starts atomic.Int32
+
+	release := make(chan struct{})
+	err := m.Register(Job{Name: "slow", Spec: "@every 1s", Run: func(context.Context) error {
+		starts.Add(1)
+		n := concurrent.Add(1)
+		for {
+			old := maxConcurrent.Load()
+			if n <= old || maxConcurrent.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		<-release // block so later fires arrive while this run is in flight
+		concurrent.Add(-1)
+		return nil
+	}})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	// Span several 1s fires while the first run is blocked.
+	time.Sleep(2500 * time.Millisecond)
+	if got := maxConcurrent.Load(); got > 1 {
+		t.Fatalf("job ran concurrently (max=%d); overlap guard failed", got)
+	}
+	close(release)
+	_ = m.Stop(context.Background())
+
+	if starts.Load() == 0 {
+		t.Fatal("job never started")
+	}
 }
 
 func TestManager_StartStop_RunsJob(t *testing.T) {

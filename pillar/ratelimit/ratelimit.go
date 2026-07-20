@@ -21,6 +21,12 @@ import (
 // fixedWindow atomically increments a per-key counter and sets its expiry on
 // first use, allowing up to `limit` requests per window. Returns 1 to allow,
 // 0 to deny.
+//
+// This is a fixed-window counter: a client can send up to `limit` requests at
+// the very end of one window and `limit` more at the start of the next, i.e. up
+// to 2*limit across a window boundary. That is the standard fixed-window
+// trade-off; use a smaller window (or a sliding-window algorithm) if strict
+// smoothing is required.
 var fixedWindow = redis.NewScript(`
 local c = redis.call("INCR", KEYS[1])
 if c == 1 then

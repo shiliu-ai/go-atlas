@@ -100,11 +100,32 @@ var sensitiveHeaders = []string{
 	"Cookie",
 	"Set-Cookie",
 	"X-Authorization-Token",
+	"X-Auth-Token",
+	"X-Access-Token",
+	"X-Api-Key",
+	"Api-Key",
+	"X-Amz-Security-Token",
+	"X-Csrf-Token",
+	"X-Xsrf-Token",
+}
+
+// sensitiveQueryParams are redacted (case-insensitively) from the request URL in
+// the panic dump so credentials passed as query parameters never land in logs.
+var sensitiveQueryParams = map[string]bool{
+	"access_token": true,
+	"token":        true,
+	"api_key":      true,
+	"apikey":       true,
+	"secret":       true,
+	"password":     true,
+	"sig":          true,
+	"signature":    true,
+	"code":         true,
 }
 
 // redactedRequestDump dumps a request (headers only, no body) for panic logging
-// with sensitive headers redacted. It clones the request so the original is
-// untouched. Returns "" for a nil request or on dump error.
+// with sensitive headers and query parameters redacted. It clones the request so
+// the original is untouched. Returns "" for a nil request or on dump error.
 func redactedRequestDump(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -113,6 +134,24 @@ func redactedRequestDump(r *http.Request) string {
 	for _, h := range sensitiveHeaders {
 		if safe.Header.Get(h) != "" {
 			safe.Header.Set(h, "[REDACTED]")
+		}
+	}
+	// r.Clone deep-copies the URL, so mutating the query here can't affect the
+	// live request.
+	if safe.URL != nil && safe.URL.RawQuery != "" {
+		q := safe.URL.Query()
+		redacted := false
+		for k := range q {
+			if sensitiveQueryParams[strings.ToLower(k)] {
+				q.Set(k, "[REDACTED]")
+				redacted = true
+			}
+		}
+		if redacted {
+			safe.URL.RawQuery = q.Encode()
+			// DumpRequest renders the request line from RequestURI when set (it is
+			// on server-side requests), so rebuild it from the redacted URL.
+			safe.RequestURI = safe.URL.RequestURI()
 		}
 	}
 	dump, err := httputil.DumpRequest(safe, false)
@@ -313,11 +352,12 @@ type rlBucket struct {
 }
 
 type memStore struct {
-	mu      sync.Mutex
-	buckets map[string]*rlBucket
-	rate    int
-	window  time.Duration
-	done    chan struct{}
+	mu       sync.Mutex
+	buckets  map[string]*rlBucket
+	rate     int
+	window   time.Duration
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // Ensure memStore satisfies RateLimiter.
@@ -366,7 +406,7 @@ func (s *memStore) cleanup() {
 	}
 }
 
-// stop terminates the cleanup goroutine.
+// stop terminates the cleanup goroutine. Safe to call more than once.
 func (s *memStore) stop() {
-	close(s.done)
+	s.stopOnce.Do(func() { close(s.done) })
 }

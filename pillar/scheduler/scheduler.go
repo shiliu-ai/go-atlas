@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/robfig/cron/v3"
 	"go.opentelemetry.io/otel"
@@ -31,7 +32,11 @@ type Job struct {
 	Spec string
 	// Lock, if non-nil, makes the job single-executor across instances: on each
 	// fire it runs only if the lock is acquired. Nil runs on every instance.
-	// Size the lock's TTL to at least the job's worst-case duration.
+	//
+	// The lock's TTL MUST exceed the job's worst-case run time. The scheduler
+	// does not renew the lock mid-run, so a run that outlives the TTL lets the
+	// lock expire and another instance may start the same job concurrently. Size
+	// the TTL with headroom, and prefer idempotent jobs.
 	Lock Locker
 	// Run is the task body; a returned error is logged.
 	Run func(ctx context.Context) error
@@ -73,10 +78,32 @@ func (m *Manager) Register(job Job) error {
 	if job.Name == "" || job.Spec == "" || job.Run == nil {
 		return fmt.Errorf("scheduler: job requires Name, Spec, and Run")
 	}
-	if _, err := m.cron.AddFunc(job.Spec, func() { m.runJob(job) }); err != nil {
+	// Guard against overlapping runs of the same job on this instance: if a run
+	// is still in flight when the next fire arrives (a job slower than its
+	// interval), skip it rather than starting a second concurrent goroutine.
+	var running atomic.Bool
+	fn := func() {
+		if !running.CompareAndSwap(false, true) {
+			m.logger.Warn(m.baseCtx(), "scheduler job still running; skipping overlapping fire",
+				log.F("job", job.Name))
+			m.recordRun("skipped")
+			return
+		}
+		defer running.Store(false)
+		m.runJob(job)
+	}
+	if _, err := m.cron.AddFunc(job.Spec, fn); err != nil {
 		return fmt.Errorf("scheduler: register %q: %w", job.Name, err)
 	}
 	return nil
+}
+
+// baseCtx returns the job base context, falling back to Background before Init.
+func (m *Manager) baseCtx() context.Context {
+	if m.ctx != nil {
+		return m.ctx
+	}
+	return context.Background()
 }
 
 // runJob executes one occurrence, applying the optional single-executor lock

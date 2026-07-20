@@ -67,7 +67,7 @@ func (a *Atlas) run(ctx context.Context) error {
 	a.setReadiness(readinessReady)
 	a.logger.Info(ctx, "atlas ready", log.F("name", a.name))
 
-	// Wait for signal or error.
+	// Wait for the first termination signal (or a component error / cancelled ctx).
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
@@ -79,8 +79,16 @@ func (a *Atlas) run(ctx context.Context) error {
 	case <-ctx.Done():
 		a.logger.Info(ctx, "context cancelled")
 	}
+	signal.Stop(quit)
 
-	return a.shutdown(context.Background())
+	// During shutdown a second signal must abort the drain delay and force a
+	// faster stop — operators expect a second Ctrl-C / SIGTERM to cut the wait
+	// short rather than block until the orchestrator SIGKILLs. Derive the
+	// shutdown context from the next signal so the drain select and the server
+	// shutdown timeout both observe it.
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return a.shutdown(shutdownCtx)
 }
 
 // shutdown performs graceful shutdown: mark the instance draining (so load
