@@ -3,6 +3,7 @@ package snowflake
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,8 @@ type Allocator interface {
 	Renew(ctx context.Context) (bool, error)
 	// Release frees the worker ID.
 	Release(ctx context.Context) error
+	// Close releases any underlying resources (e.g. the Redis client).
+	Close() error
 }
 
 // staticAllocator returns a fixed, configured worker ID and never expires.
@@ -29,6 +32,7 @@ type staticAllocator struct{ workerID int64 }
 func (s *staticAllocator) Acquire(context.Context) (int64, error) { return s.workerID, nil }
 func (s *staticAllocator) Renew(context.Context) (bool, error)    { return true, nil }
 func (s *staticAllocator) Release(context.Context) error          { return nil }
+func (s *staticAllocator) Close() error                           { return nil }
 
 // owner-checked lease scripts (renew/release only if we still hold the key).
 var renewScript = redis.NewScript(`
@@ -73,7 +77,10 @@ func newRedisAllocator(cfg Config) (*redisAllocator, error) {
 }
 
 func (r *redisAllocator) Acquire(ctx context.Context) (int64, error) {
-	for i := int64(0); i <= maxWorkerID; i++ {
+	// Start at a random offset so simultaneous startups don't all contend on ID 0.
+	start := int64(rand.IntN(maxWorkerID + 1))
+	for n := int64(0); n <= maxWorkerID; n++ {
+		i := (start + n) % (maxWorkerID + 1)
 		key := fmt.Sprintf("%s%d", r.keyPrefix, i)
 		ok, err := r.client.SetNX(ctx, key, r.token, r.ttl).Result()
 		if err != nil {
@@ -105,3 +112,5 @@ func (r *redisAllocator) Release(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (r *redisAllocator) Close() error { return r.client.Close() }

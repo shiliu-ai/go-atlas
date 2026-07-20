@@ -71,9 +71,10 @@ func (m *Manager) Init(core *atlas.Core) error {
 	if err != nil {
 		return fmt.Errorf("snowflake: %w", err)
 	}
-	m.gen = &Generator{sf: sf}
+	m.gen = &Generator{}
+	m.gen.setSnowflake(sf)
 	m.gen.setOpen(true)
-	m.leaseExpires = time.Now().Add(cfg.TTL)
+	m.setLease(time.Now().Add(cfg.TTL))
 
 	mode := "static"
 	if !m.static {
@@ -92,7 +93,11 @@ func (m *Manager) Start(_ context.Context) error {
 	}
 	loopCtx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+
+	// renewer: extend the lease on schedule (bounded), re-acquire if lost.
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		t := time.NewTicker(m.renew)
 		defer t.Stop()
 		for {
@@ -100,7 +105,28 @@ func (m *Manager) Start(_ context.Context) error {
 			case <-loopCtx.Done():
 				return
 			case <-t.C:
-				m.renewOnce(loopCtx, time.Now())
+				m.tryRenew(loopCtx)
+			}
+		}
+	}()
+
+	// watchdog: close the gate on wall-clock before the lease expires, even if
+	// a renewal is blocked. Runs at a fraction of the safety margin.
+	watchEvery := m.safety / 2
+	if watchEvery <= 0 {
+		watchEvery = time.Second
+	}
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		t := time.NewTicker(watchEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-t.C:
+				m.checkLease(time.Now())
 			}
 		}
 	}()
@@ -112,10 +138,16 @@ func (m *Manager) Stop(ctx context.Context) error {
 	if m.cancel != nil {
 		m.cancel()
 	}
-	if m.allocator != nil {
-		return m.allocator.Release(ctx)
+	m.wg.Wait() // ensure no renewal is in flight before releasing
+	if m.allocator == nil {
+		return nil
 	}
-	return nil
+	relErr := m.allocator.Release(ctx)
+	closeErr := m.allocator.Close()
+	if relErr != nil {
+		return relErr
+	}
+	return closeErr
 }
 
 // Health reports unhealthy when the fail-safe gate is closed (lease lost),

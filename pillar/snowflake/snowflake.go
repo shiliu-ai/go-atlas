@@ -1,14 +1,20 @@
 // Package snowflake is an atlas Pillar that assigns each instance a unique
 // Snowflake worker ID (0..1023) — automatically via a Redis lease by default,
-// or from a static config override. If the Redis lease cannot be renewed and
-// the worker ID may have expired, generation is stopped (fail-safe) so two
-// instances never share a worker ID and produce duplicate IDs.
+// or from a static config override.
+//
+// A background watchdog closes a generation gate before the lease could expire,
+// so generation stops (fail-safe) rather than risk two instances sharing a
+// worker ID. If the lease is lost, the pillar re-acquires a fresh worker ID and
+// resumes. Uniqueness holds as long as the process is not stalled (e.g. a GC or
+// scheduling pause) for longer than roughly ttl - renew_interval; size the
+// timings accordingly for stall-prone workloads.
 package snowflake
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,7 +22,7 @@ import (
 	"github.com/shiliu-ai/go-atlas/artifact/id"
 )
 
-// ErrUnavailable is returned by Generate when the worker ID lease has been lost
+// ErrUnavailable is returned by Generate when the worker-ID lease has been lost
 // and the fail-safe gate is closed.
 var ErrUnavailable = errors.New("snowflake: worker ID lease lost, generation unavailable")
 
@@ -29,25 +35,13 @@ type RedisConfig struct {
 
 // Config configures the snowflake Pillar.
 type Config struct {
-	// WorkerID, if set, statically pins the worker ID and disables Redis
-	// allocation. Leave unset for automatic allocation.
-	WorkerID *int64 `mapstructure:"worker_id"`
-	// Redis is the backend for automatic allocation (required unless WorkerID
-	// is set).
-	Redis RedisConfig `mapstructure:"redis"`
-	// TTL is the worker-ID lease lifetime. Must exceed RenewInterval +
-	// SafetyMargin. Default 30s.
-	TTL time.Duration `mapstructure:"ttl"`
-	// RenewInterval is how often the lease is renewed. Default 10s.
+	WorkerID      *int64        `mapstructure:"worker_id"`
+	Redis         RedisConfig   `mapstructure:"redis"`
+	TTL           time.Duration `mapstructure:"ttl"`
 	RenewInterval time.Duration `mapstructure:"renew_interval"`
-	// SafetyMargin closes the gate this long before the lease would expire.
-	// Default 5s.
-	SafetyMargin time.Duration `mapstructure:"safety_margin"`
-	// FailMode is "safe" (default: stop generating on lease loss) or
-	// "besteffort" (keep generating; risks duplicate IDs).
-	FailMode string `mapstructure:"fail_mode"`
-	// KeyPrefix namespaces the Redis lease keys. Default "snowflake:worker:".
-	KeyPrefix string `mapstructure:"key_prefix"`
+	SafetyMargin  time.Duration `mapstructure:"safety_margin"`
+	FailMode      string        `mapstructure:"fail_mode"`
+	KeyPrefix     string        `mapstructure:"key_prefix"`
 }
 
 func (c Config) withDefaults() Config {
@@ -70,6 +64,12 @@ func (c Config) validate() error {
 	if c.WorkerID == nil && c.Redis.Addr == "" {
 		return fmt.Errorf("snowflake: redis.addr required for automatic worker id allocation (or set worker_id)")
 	}
+	if c.WorkerID != nil && (*c.WorkerID < 0 || *c.WorkerID > maxWorkerID) {
+		return fmt.Errorf("snowflake: worker_id must be in [0, %d]", maxWorkerID)
+	}
+	if c.TTL <= 0 || c.RenewInterval <= 0 || c.SafetyMargin < 0 {
+		return fmt.Errorf("snowflake: ttl and renew_interval must be > 0 and safety_margin >= 0")
+	}
 	if c.TTL <= c.RenewInterval+c.SafetyMargin {
 		return fmt.Errorf("snowflake: ttl (%s) must exceed renew_interval + safety_margin (%s)",
 			c.TTL, c.RenewInterval+c.SafetyMargin)
@@ -77,22 +77,22 @@ func (c Config) validate() error {
 	return nil
 }
 
-// Generator wraps an id.Snowflake with an atomic gate so generation can be
-// stopped when the worker-ID lease is lost.
+// Generator wraps an id.Snowflake with an atomic gate and a swappable generator
+// (the worker ID can change if the lease is lost and re-acquired).
 type Generator struct {
-	sf   *id.Snowflake
+	sf   atomic.Pointer[id.Snowflake]
 	open atomic.Bool
 }
 
-func (g *Generator) setOpen(v bool) { g.open.Store(v) }
+func (g *Generator) setOpen(v bool)                { g.open.Store(v) }
+func (g *Generator) setSnowflake(sf *id.Snowflake) { g.sf.Store(sf) }
 
-// Generate returns a new unique snowflake ID, or ErrUnavailable if the gate is
-// closed (lease lost).
+// Generate returns a new unique ID, or ErrUnavailable if the gate is closed.
 func (g *Generator) Generate() (int64, error) {
 	if !g.open.Load() {
 		return 0, ErrUnavailable
 	}
-	return g.sf.Generate()
+	return g.sf.Load().Generate()
 }
 
 // Manager is the snowflake Pillar.
@@ -107,12 +107,16 @@ type Manager struct {
 	renew    time.Duration
 	safety   time.Duration
 
-	// leaseExpires is the local estimate of when the current lease ends; only
-	// touched by the single renewal goroutine (and Init before it starts).
-	leaseExpires time.Time
+	// leaseExpiresNano is the local estimate (unix nano) of when the lease ends;
+	// written by the renewer goroutine, read by the watchdog goroutine.
+	leaseExpiresNano atomic.Int64
 
+	wg     sync.WaitGroup
 	cancel context.CancelFunc
 }
+
+func (m *Manager) setLease(t time.Time) { m.leaseExpiresNano.Store(t.UnixNano()) }
+func (m *Manager) lease() time.Time     { return time.Unix(0, m.leaseExpiresNano.Load()) }
 
 // Generate returns a new unique snowflake ID (see Generator.Generate).
 func (m *Manager) Generate() (int64, error) { return m.gen.Generate() }
@@ -126,24 +130,65 @@ func (m *Manager) MustGenerate() int64 {
 	return v
 }
 
-// renewOnce renews the lease and updates the gate. On success the gate opens
-// and the lease is extended; on failure the gate closes once now+SafetyMargin
-// reaches the lease expiry (fail-safe), unless besteffort mode is set.
-func (m *Manager) renewOnce(ctx context.Context, now time.Time) {
-	ok, err := m.allocator.Renew(ctx)
+// tryRenew renews the lease with a bounded timeout. On success it extends the
+// lease and opens the gate; if the lease is definitively lost (renew reports we
+// no longer own it) it re-acquires a fresh worker ID.
+func (m *Manager) tryRenew(ctx context.Context) {
+	rctx, cancel := context.WithTimeout(ctx, m.renew)
+	defer cancel()
+
+	ok, err := m.allocator.Renew(rctx)
 	if err == nil && ok {
-		m.leaseExpires = now.Add(m.ttl)
+		m.setLease(time.Now().Add(m.ttl))
 		m.gen.setOpen(true)
 		return
 	}
 	if err != nil {
 		m.logger.Warn(ctx, "snowflake lease renew failed", log.F("error", err))
-	} else {
-		m.logger.Warn(ctx, "snowflake lease lost")
+		return // transient: watchdog closes the gate if the lease runs out
 	}
-	if m.failSafe && !now.Add(m.safety).Before(m.leaseExpires) {
-		if m.gen.open.Swap(false) {
-			m.logger.Error(ctx, "snowflake gate closed: lease unrenewed within safety margin")
-		}
+	// Not the owner anymore: the lease was lost. Re-acquire a fresh worker ID.
+	m.logger.Warn(ctx, "snowflake lease lost, re-acquiring worker id")
+	m.reacquire(ctx)
+}
+
+// reacquire claims a new worker ID and rebuilds the generator. It is bounded so
+// a slow/partitioned Redis cannot stall the renewer indefinitely (the watchdog
+// keeps the gate closed meanwhile).
+func (m *Manager) reacquire(ctx context.Context) {
+	rctx, cancel := context.WithTimeout(ctx, m.renew)
+	defer cancel()
+
+	// Release the old lease first (owner-checked no-op if we no longer hold it)
+	// so we never keep two worker-id leases at once.
+	_ = m.allocator.Release(rctx)
+
+	wid, err := m.allocator.Acquire(rctx)
+	if err != nil {
+		m.logger.Warn(ctx, "snowflake re-acquire failed", log.F("error", err))
+		return
+	}
+	sf, err := id.NewSnowflake(wid)
+	if err != nil {
+		m.logger.Error(ctx, "snowflake re-acquire produced invalid worker id", log.F("error", err))
+		return
+	}
+	m.gen.setSnowflake(sf)
+	m.setLease(time.Now().Add(m.ttl))
+	m.gen.setOpen(true)
+	m.logger.Info(ctx, "snowflake worker id re-acquired", log.F("worker_id", wid))
+}
+
+// checkLease is the watchdog: it closes the gate once the lease is within the
+// safety margin of expiry, on wall-clock, independent of renewal progress.
+func (m *Manager) checkLease(now time.Time) {
+	if !m.failSafe {
+		return
+	}
+	if now.Add(m.safety).Before(m.lease()) {
+		return
+	}
+	if m.gen.open.Swap(false) {
+		m.logger.Error(context.Background(), "snowflake gate closed: lease within safety margin")
 	}
 }
