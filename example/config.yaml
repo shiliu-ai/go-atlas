@@ -15,6 +15,12 @@ server:
   # Recommended in Kubernetes rolling updates, e.g. 5s.
   # pre_shutdown_delay: 5s
 
+health:
+  # Expose the per-pillar breakdown (names/status/latency) on /healthz. Default
+  # false returns only the aggregate status so unauthenticated callers cannot
+  # enumerate backends. Enable only on internal/authenticated endpoints.
+  show_details: false
+
 log:
   level: "debug"
   format: "text"            # text (default) | json

@@ -14,7 +14,17 @@ type coreConfig struct {
 	Server     serverConfig     `mapstructure:"server"`
 	Log        logConfig        `mapstructure:"log"`
 	I18n       i18nConfig       `mapstructure:"i18n"`
-	Middleware middlewareConfig  `mapstructure:"middleware"`
+	Middleware middlewareConfig `mapstructure:"middleware"`
+	Health     healthConfig     `mapstructure:"health"`
+}
+
+// healthConfig holds health-endpoint configuration.
+type healthConfig struct {
+	// ShowDetails controls whether /healthz includes the per-pillar breakdown
+	// (names, status, latency). Default false returns only the aggregate status,
+	// so an unauthenticated caller cannot enumerate backends or their state.
+	// Enable only on internal/authenticated endpoints.
+	ShowDetails bool `mapstructure:"show_details"`
 }
 
 // logConfig holds logging configuration.
@@ -30,8 +40,8 @@ type i18nConfig struct {
 
 // middlewareConfig holds middleware configuration.
 type middlewareConfig struct {
-	CORS      corsConfig      `mapstructure:"cors"`
-	RateLimit rateLimitCfg    `mapstructure:"rate_limit"`
+	CORS      corsConfig   `mapstructure:"cors"`
+	RateLimit rateLimitCfg `mapstructure:"rate_limit"`
 }
 
 // rateLimitCfg holds rate limiter YAML-friendly configuration.

@@ -36,7 +36,9 @@ func (a *Atlas) healthzHandler(c *gin.Context) {
 		status = http.StatusServiceUnavailable
 	}
 	resp := gin.H{"status": overall}
-	if len(pillars) > 0 {
+	// Only expose the per-pillar breakdown when explicitly enabled, so an
+	// unauthenticated caller cannot enumerate backends or their up/down state.
+	if a.coreCfg.Health.ShowDetails && len(pillars) > 0 {
 		resp["pillars"] = pillars
 	}
 	c.JSON(status, resp)
